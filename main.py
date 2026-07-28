@@ -713,3 +713,27 @@ def sync_shopify_products(db: Session = Depends(get_db)):
         "toplam_okunan_urun": len(products_data),
         "veritabanina_yazilan_yeni_urun": yeni_kayit_sayisi
     }
+
+@app.get("/veritabani-kontrol")
+def veritabani_kontrol(db: Session = Depends(get_db)):
+    # 1. Veritabanındaki Product tablosunda toplam kaç satır olduğunu sayıyoruz
+    toplam_kayit = db.query(models.Product).count()
+    
+    # 2. Ekranı 159 ürünle boğmamak için, veritabanına eklenen son 5 ürünü çekiyoruz
+    son_urunler = db.query(models.Product).order_by(models.Product.id.desc()).limit(5).all()
+    
+    # 3. Çekilen bu verileri okunabilir bir listeye çeviriyoruz
+    liste = []
+    for u in son_urunler:
+        liste.append({
+            "veritabani_id": u.id,
+            "merchant_id": u.merchant_id,
+            "urun_adi": u.title,
+            "marka": u.brand
+        })
+        
+    return {
+        "sistem_mesaji": "PostgreSQL Veritabanı Okuması Başarılı",
+        "veritabanindaki_toplam_urun_sayisi": toplam_kayit,
+        "son_eklenen_ornek_urunler": liste
+    }
