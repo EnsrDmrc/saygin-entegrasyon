@@ -2,3 +2,4 @@ fastapi
 uvicorn
 sqlalchemy
 Jinja2
+psycopg2-binary
