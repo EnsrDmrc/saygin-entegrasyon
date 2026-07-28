@@ -1,5 +1,5 @@
-fastapi
-uvicorn
-sqlalchemy
-Jinja2
-psycopg2-binary
+fastapi==0.140.7
+pydantic==2.13.4
+PyJWT==2.13.0
+python_bcrypt==0.3.2
+SQLAlchemy==2.0.51
