@@ -612,7 +612,7 @@ def get_shopify_products():
         return {"hata": "Shopify Token bulunamadı. Lütfen Render Environment ayarlarını kontrol edin."}
         
     # Shopify 2026-07 API versiyonunu kullanarak ürünler uç noktasına gidiyoruz
-    url = f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/products.json"
+    url = f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/products.json?limit=250"
     
     # Kapıyı açacak olan özel VIP kartımız (Token) başlıklar (headers) arasına ekleniyor
     headers = {
