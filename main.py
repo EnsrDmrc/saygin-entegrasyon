@@ -575,7 +575,7 @@ from fastapi.responses import RedirectResponse
 
 SHOPIFY_CLIENT_ID = os.getenv("SHOPIFY_CLIENT_ID")
 SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET")
-SHOPIFY_STORE_URL = "saygingruphirdavat.myshopify.com"
+SHOPIFY_STORE_URL = "saygin-grup.myshopify.com"
 
 @app.get("/shopify/install")
 def shopify_install():
