@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import os
 import requests
+from fastapi.responses import RedirectResponse
 
 
 # FastAPI uygulamasını başlatıyoruz
@@ -571,7 +572,7 @@ def idefix_webhook(merchant_id: int, db: Session = Depends(get_db), payload: dic
     return process_standardized_order(db, merchant_id, 8, order_number, total_price, standard_items)
 
 
-from fastapi.responses import RedirectResponse
+
 
 SHOPIFY_CLIENT_ID = os.getenv("SHOPIFY_CLIENT_ID")
 SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET")
@@ -601,3 +602,46 @@ def shopify_callback(code: str, shop: str):
     print("="*50)
 
     return {"mesaj": "Yetkilendirme Basarili! Lutfen Render Log ekranina (Live tail) donup shpat_ ile baslayan token'i kopyala."}
+
+# Ortam değişkeninden token'ı çekiyoruz
+SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+
+@app.get("/shopify/products")
+def get_shopify_products():
+    if not SHOPIFY_ACCESS_TOKEN:
+        return {"hata": "Shopify Token bulunamadı. Lütfen Render Environment ayarlarını kontrol edin."}
+        
+    # Shopify 2026-07 API versiyonunu kullanarak ürünler uç noktasına gidiyoruz
+    url = f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/products.json"
+    
+    # Kapıyı açacak olan özel VIP kartımız (Token) başlıklar (headers) arasına ekleniyor
+    headers = {
+        "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
+        "Content-Type": "application/json"
+    }
+    
+    # Mağazaya GET isteği atıyoruz
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code == 200:
+        products_data = response.json().get("products", [])
+        
+        # Karmaşık JSON verisi içinden sadece hırdavat ürünlerinin adını ve fiyatını süzüyoruz
+        vitrin = []
+        for item in products_data:
+            title = item.get("title")
+            variants = item.get("variants", [])
+            # Eğer ürünün varyantı varsa ilk varyantın fiyatını al
+            price = variants[0].get("price") if variants else "0.00"
+            vitrin.append({"urun_adi": title, "fiyat": price})
+            
+        return {
+            "mesaj": "Veri çekme başarılı!",
+            "toplam_urun_sayisi": len(vitrin),
+            "urunler": vitrin
+        }
+    else:
+        return {
+            "hata": f"Mağazaya ulaşılamadı. Hata Kodu: {response.status_code}",
+            "detay": response.text
+        }
