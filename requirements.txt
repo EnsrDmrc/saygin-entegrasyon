@@ -3,3 +3,6 @@ pydantic==2.13.4
 PyJWT==2.13.0
 python_bcrypt==0.3.2
 SQLAlchemy==2.0.51
+uvicorn
+psycopg2-binary
+Jinja2
