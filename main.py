@@ -677,7 +677,12 @@ def sync_shopify_products(db: Session = Depends(get_db)):
     # İlişkisel veritabanı mantığında ürünlerin bağlanacağı bir satıcı olmak zorunda.
     merchant = db.query(models.Merchant).filter(models.Merchant.id == 1).first()
     if not merchant:
-        merchant = models.Merchant(id=1)
+        merchant = models.Merchant(
+            id=1,
+            company_name="Saygın Grup Hırdavat",
+            email="info@saygingruphirdavat.com.tr",
+            hashed_password="entegrasyon_gecici_sifre_123"
+        )
         db.add(merchant)
         db.commit()
         db.refresh(merchant)
