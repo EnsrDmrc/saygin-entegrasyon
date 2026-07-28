@@ -12,6 +12,9 @@ from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+import os
+import requests
+
 
 # FastAPI uygulamasını başlatıyoruz
 app = FastAPI(title="Çok Kanallı Entegrasyon API")
@@ -566,3 +569,35 @@ def idefix_webhook(merchant_id: int, db: Session = Depends(get_db), payload: dic
     standard_items = [{"sku": str(i.get("merchant_sku")), "quantity": int(i.get("quantity", 1)), "price": float(i.get("price", 0.0))} for i in basket_items]
         
     return process_standardized_order(db, merchant_id, 8, order_number, total_price, standard_items)
+
+
+from fastapi.responses import RedirectResponse
+
+SHOPIFY_CLIENT_ID = os.getenv("SHOPIFY_CLIENT_ID")
+SHOPIFY_CLIENT_SECRET = os.getenv("SHOPIFY_CLIENT_SECRET")
+SHOPIFY_STORE_URL = "saygingruphirdavat.myshopify.com"
+
+@app.get("/shopify/install")
+def shopify_install():
+    # Mağazaya gidip ürün ve stok okuma yetkisi istiyoruz
+    auth_url = f"https://{SHOPIFY_STORE_URL}/admin/oauth/authorize?client_id={SHOPIFY_CLIENT_ID}&scope=read_products,read_inventory&redirect_uri=https://saygin-entegrasyon.onrender.com/shopify/callback"
+    return RedirectResponse(auth_url)
+
+@app.get("/shopify/callback")
+def shopify_callback(code: str, shop: str):
+    # Onaydan sonra dönen kodu (code), asıl Token ile takas ediyoruz
+    token_url = f"https://{shop}/admin/oauth/access_token"
+    payload = {
+        "client_id": SHOPIFY_CLIENT_ID,
+        "client_secret": SHOPIFY_CLIENT_SECRET,
+        "code": code
+    }
+    response = requests.post(token_url, json=payload)
+    access_token = response.json().get("access_token")
+
+    # Şifreyi Render loglarına yazdırıyoruz!
+    print("="*50)
+    print(f"BINGO! İŞTE ARADIĞIMIZ TOKEN: {access_token}")
+    print("="*50)
+
+    return {"mesaj": "Yetkilendirme Basarili! Lutfen Render Log ekranina (Live tail) donup shpat_ ile baslayan token'i kopyala."}

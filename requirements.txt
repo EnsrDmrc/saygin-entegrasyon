@@ -7,3 +7,4 @@ uvicorn
 psycopg2-binary
 Jinja2
 python-multipart
+requests
