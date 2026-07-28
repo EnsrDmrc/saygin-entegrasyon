@@ -15,7 +15,15 @@ from fastapi.templating import Jinja2Templates
 import os
 import requests
 from fastapi.responses import RedirectResponse
+from database import SessionLocal
 
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 # FastAPI uygulamasını başlatıyoruz
 app = FastAPI(title="Çok Kanallı Entegrasyon API")
@@ -645,3 +653,58 @@ def get_shopify_products():
             "hata": f"Mağazaya ulaşılamadı. Hata Kodu: {response.status_code}",
             "detay": response.text
         }
+
+
+
+@app.get("/shopify/sync")
+def sync_shopify_products(db: Session = Depends(get_db)):
+    SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+    
+    # 1. Shopify'dan 250 limitli veri çekimi
+    url = f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/products.json?limit=250"
+    headers = {
+        "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
+        "Content-Type": "application/json"
+    }
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code != 200:
+        return {"hata": "Shopify verisi çekilemedi."}
+        
+    products_data = response.json().get("products", [])
+    
+    # 2. Satıcı (Merchant) Kaydını Kontrol Et veya Oluştur
+    # İlişkisel veritabanı mantığında ürünlerin bağlanacağı bir satıcı olmak zorunda.
+    merchant = db.query(models.Merchant).filter(models.Merchant.id == 1).first()
+    if not merchant:
+        merchant = models.Merchant(id=1)
+        db.add(merchant)
+        db.commit()
+        db.refresh(merchant)
+
+    # 3. Ürünleri Veritabanına Yazma Döngüsü
+    yeni_kayit_sayisi = 0
+    for item in products_data:
+        # Ürün veritabanımızda daha önce eklenmiş mi diye isminden kontrol ediyoruz
+        mevcut_urun = db.query(models.Product).filter(models.Product.title == item.get("title")).first()
+        
+        if not mevcut_urun:
+            # Modellerindeki 'Product' sütunlarına (merchant_id, title, brand) uygun olarak kaydediyoruz
+            yeni_urun = models.Product(
+                merchant_id=merchant.id,
+                title=item.get("title"),
+                brand=item.get("vendor")  # Shopify'daki marka bilgisi
+            )
+            db.add(yeni_urun)
+            db.commit()
+            db.refresh(yeni_urun)
+            yeni_kayit_sayisi += 1
+            
+            # Not: Variant (Fiyat, Stok) detaylarını eklemek için modellerinin tam sütunlarını 
+            # bilmemiz gerektiğinden şimdilik ana ürün tablosunu dolduruyoruz.
+
+    return {
+        "mesaj": "Veritabanı Senkronizasyonu Kusursuz Tamamlandı!",
+        "toplam_okunan_urun": len(products_data),
+        "veritabanina_yazilan_yeni_urun": yeni_kayit_sayisi
+    }
