@@ -6,3 +6,4 @@ SQLAlchemy==2.0.51
 uvicorn
 psycopg2-binary
 Jinja2
+python-multipart
