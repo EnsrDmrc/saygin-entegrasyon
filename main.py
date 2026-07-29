@@ -796,3 +796,49 @@ def shopify_order_webhook(payload: dict, db: Session = Depends(get_db)):
         "mesaj": "Siparis basariyla islendi ve stoklar dusuldu", 
         "guncellenen_varyant_sayisi": guncellenen_varyant_sayisi
     }
+
+
+@app.put("/urun-fiyat-guncelle/{sku}")
+def urun_fiyat_guncelle(sku: str, yeni_fiyat: float, db: Session = Depends(get_db)):
+    # 1. Önce kendi veritabanımızda ilgili ürünü (varyantı) buluyoruz
+    varyant = db.query(models.Variant).filter(models.Variant.sku == sku).first()
+    
+    if not varyant:
+        return {"hata": "Bu SKU'ya ait varyant veritabanında bulunamadı!"}
+
+    # 2. Kendi sistemimizde fiyatı güncelliyoruz (Burası bizim merkezimiz)
+    varyant.base_price = yeni_fiyat
+    db.commit()
+
+    # 3. Değişikliği anında Shopify vitrinine fırlatıyoruz (Push Mimarisi)
+    SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+    
+    # Shopify Variant Update API URL'si
+    url = f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/variants/{sku}.json"
+    headers = {
+        "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
+        "Content-Type": "application/json"
+    }
+    
+    # Shopify'ın bizden beklediği JSON paketi
+    payload = {
+        "variant": {
+            "id": sku,
+            "price": yeni_fiyat
+        }
+    }
+    
+    # Veriyi yolluyoruz (PUT metodu güncellemeler için kullanılır)
+    response = requests.put(url, headers=headers, json=payload)
+    
+    if response.status_code == 200:
+        return {
+            "mesaj": "Mükemmel! Fiyat hem yerel veritabanında hem de Shopify vitrininde eşzamanlı olarak güncellendi.",
+            "eski_fiyat": varyant.base_price,
+            "yeni_fiyat": yeni_fiyat
+        }
+    else:
+        return {
+            "hata": "Kendi veritabanımız güncellendi ancak Shopify'a bağlanırken sorun oluştu.", 
+            "shopify_yaniti": response.json()
+        }
