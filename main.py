@@ -755,3 +755,36 @@ def veritabani_kontrol(db: Session = Depends(get_db)):
         "veritabanindaki_toplam_urun_sayisi": toplam_kayit,
         "son_eklenen_ornek_urunler": liste
     }
+
+
+@app.post("/shopify/webhook/orders")
+def shopify_order_webhook(payload: dict, db: Session = Depends(get_db)):
+    # Shopify'dan gelen sipariş paketinin içindeki satır kalemlerini (sepeti) alıyoruz
+    line_items = payload.get("line_items", [])
+    guncellenen_varyant_sayisi = 0
+    
+    for item in line_items:
+        # Satılan varyantın Shopify'daki ID'sini ve kaç adet satıldığını çekiyoruz
+        shopify_variant_id = str(item.get("variant_id"))
+        satilan_adet = item.get("quantity", 0)
+        
+        # Hatırlarsan varyantları kaydederken sku sütununa shopify_variant_id değerini yazmıştık.
+        # Şimdi o ID ile PostgreSQL veritabanımızdan ilgili varyantı buluyoruz.
+        varyant = db.query(models.Variant).filter(models.Variant.sku == shopify_variant_id).first()
+        
+        if varyant and satilan_adet > 0:
+            # Mevcut stoktan satılan adedi düşüyoruz
+            yeni_stok = varyant.stock_quantity - satilan_adet
+            
+            # Güvenlik önlemi: Stok eksiye düşmesin diye minimum 0'da tutuyoruz
+            varyant.stock_quantity = max(0, yeni_stok)
+            guncellenen_varyant_sayisi += 1
+            
+    # Tüm sepet dönüldükten ve stoklar düşüldükten sonra veritabanına kalıcı olarak kaydediyoruz (Commit)
+    db.commit()
+    
+    # Shopify'a "Haberi aldım, işlemi yaptım, her şey yolunda" (HTTP 200) sinyali dönüyoruz
+    return {
+        "mesaj": "Siparis basariyla islendi ve stoklar dusuldu", 
+        "guncellenen_varyant_sayisi": guncellenen_varyant_sayisi
+    }
