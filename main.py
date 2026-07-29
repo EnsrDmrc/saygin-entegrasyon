@@ -734,28 +734,35 @@ def sync_shopify_products(db: Session = Depends(get_db)):
 
 @app.get("/veritabani-kontrol")
 def veritabani_kontrol(db: Session = Depends(get_db)):
-    # 1. Veritabanındaki Product tablosunda toplam kaç satır olduğunu sayıyoruz
-    toplam_kayit = db.query(models.Product).count()
+    # 1. Emniyet kemerini kaldırdık: Tüm ürünleri baştan sona (ID'ye göre artan şekilde) çekiyoruz
+    tum_urunler = db.query(models.Product).order_by(models.Product.id.asc()).all()
     
-    # 2. Ekranı 159 ürünle boğmamak için, veritabanına eklenen son 5 ürünü çekiyoruz
-    son_urunler = db.query(models.Product).order_by(models.Product.id.desc()).limit(5).all()
-    
-    # 3. Çekilen bu verileri okunabilir bir listeye çeviriyoruz
     liste = []
-    for u in son_urunler:
+    for u in tum_urunler:
+        # 2. Her ürünün ID'sini alıp, Variant tablosuna giderek o ürüne ait stok/fiyatları buluyoruz
+        varyantlar = db.query(models.Variant).filter(models.Variant.product_id == u.id).all()
+        
+        varyant_listesi = []
+        for v in varyantlar:
+            varyant_listesi.append({
+                "varyant_sku": v.sku,
+                "fiyat": v.base_price,
+                "stok_adedi": v.stock_quantity
+            })
+            
+        # 3. Ana ürün bilgisiyle alt varyantları birleştirip paketliyoruz
         liste.append({
             "veritabani_id": u.id,
-            "merchant_id": u.merchant_id,
             "urun_adi": u.title,
-            "marka": u.brand
+            "marka": u.brand,
+            "varyantlar": varyant_listesi
         })
         
     return {
-        "sistem_mesaji": "PostgreSQL Veritabanı Okuması Başarılı",
-        "veritabanindaki_toplam_urun_sayisi": toplam_kayit,
-        "son_eklenen_ornek_urunler": liste
+        "sistem_mesaji": "Tüm Ürünler ve Stoklar Başarıyla Çekildi",
+        "veritabanindaki_toplam_urun_sayisi": len(tum_urunler),
+        "urun_katalogu": liste
     }
-
 
 @app.post("/shopify/webhook/orders")
 def shopify_order_webhook(payload: dict, db: Session = Depends(get_db)):
