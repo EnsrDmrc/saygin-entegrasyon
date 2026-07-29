@@ -589,7 +589,7 @@ SHOPIFY_STORE_URL = "saygin-grup.myshopify.com"
 @app.get("/shopify/install")
 def shopify_install():
     # Mağazaya gidip ürün ve stok okuma yetkisi istiyoruz
-    auth_url = f"https://{SHOPIFY_STORE_URL}/admin/oauth/authorize?client_id={SHOPIFY_CLIENT_ID}&scope=read_products,read_inventory&redirect_uri=https://saygin-entegrasyon.onrender.com/shopify/callback"
+    auth_url = f"https://{SHOPIFY_STORE_URL}/admin/oauth/authorize?client_id={SHOPIFY_CLIENT_ID}&scope=read_products,read_inventory,write_products&redirect_uri=https://saygin-entegrasyon.onrender.com/shopify/callback"
     return RedirectResponse(auth_url)
 
 @app.get("/shopify/callback")
