@@ -718,8 +718,8 @@ def sync_shopify_products(db: Session = Depends(get_db)):
                 yeni_varyant = models.Variant(
                     product_id=urun_id,
                     sku=shopify_variant_id, # Gerçek SKU boş olabileceği için şimdilik Shopify ID'sini SKU alanına yazıyoruz
-                    price=var.get("price"),
-                    stock=var.get("inventory_quantity") or 0
+                    base_price=var.get("price"),
+                    stock_quantity=var.get("inventory_quantity") or 0
                 )
                 db.add(yeni_varyant)
                 yeni_varyant_sayisi += 1
