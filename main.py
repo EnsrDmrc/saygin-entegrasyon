@@ -842,3 +842,44 @@ def urun_fiyat_guncelle(sku: str, yeni_fiyat: float, db: Session = Depends(get_d
             "hata": "Kendi veritabanımız güncellendi ancak Shopify'a bağlanırken sorun oluştu.", 
             "shopify_yaniti": response.json()
         }
+
+
+
+@app.post("/test-siparis-yarat/{sku}")
+def test_siparis_yarat(sku: str, adet: int = 1):
+    SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+    SHOPIFY_STORE_URL = os.getenv("SHOPIFY_STORE_URL")
+    
+    url = f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/orders.json"
+    headers = {
+        "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
+        "Content-Type": "application/json"
+    }
+    
+    # Shopify'a gönderilecek sipariş paketi
+    # inventory_behaviour parametresi, Shopify'a stoğu anında düşmesini emreder.
+    payload = {
+        "order": {
+            "line_items": [
+                {
+                    "variant_id": sku,
+                    "quantity": adet
+                }
+            ],
+            "inventory_behaviour": "decrement_obeying_policy",
+            "financial_status": "paid"
+        }
+    }
+    
+    response = requests.post(url, headers=headers, json=payload)
+    
+    if response.status_code == 201:
+        return {
+            "mesaj": f"Başarılı! API üzerinden test siparişi oluşturuldu ve {adet} adet stok düşüldü.",
+            "siparis_id": response.json()["order"]["id"]
+        }
+    else:
+        return {
+            "hata": "Sipariş oluşturulamadı.", 
+            "detay": response.json()
+        }
