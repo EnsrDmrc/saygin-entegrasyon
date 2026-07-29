@@ -772,13 +772,14 @@ def shopify_order_webhook(payload: dict, db: Session = Depends(get_db)):
         # Şimdi o ID ile PostgreSQL veritabanımızdan ilgili varyantı buluyoruz.
         varyant = db.query(models.Variant).filter(models.Variant.sku == shopify_variant_id).first()
         
-        if varyant and satilan_adet > 0:
-            # Mevcut stoktan satılan adedi düşüyoruz
-            yeni_stok = varyant.stock_quantity - satilan_adet
-            
-            # Güvenlik önlemi: Stok eksiye düşmesin diye minimum 0'da tutuyoruz
+    if varyant and satilan_adet > 0:
+            eski_stok = varyant.stock_quantity
+            yeni_stok = eski_stok - satilan_adet
             varyant.stock_quantity = max(0, yeni_stok)
             guncellenen_varyant_sayisi += 1
+            
+            # Render loglarında görmek için özel bir mesaj yazdırıyoruz
+            print(f"BINGO! Shopify'dan sipariş geldi. SKU: {shopify_variant_id} | Stok {eski_stok} -> {varyant.stock_quantity} olarak güncellendi!")
             
     # Tüm sepet dönüldükten ve stoklar düşüldükten sonra veritabanına kalıcı olarak kaydediyoruz (Commit)
     db.commit()
