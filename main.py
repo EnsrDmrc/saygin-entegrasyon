@@ -934,50 +934,44 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
         operasyon_raporu["n11_durumu"] = "Başarısız: Shopify'dan ortak SKU okunamadığı için N11'e gidilemedi."
     else:
         try:
+            # Şifreler temizlenmiş ve zırhlanmış durumda
             N11_APP_KEY = os.getenv("N11_APP_KEY", "").strip()
             N11_APP_SECRET = os.getenv("N11_APP_SECRET", "").strip()
             
-            # İç kısımdaki "sch:" etiketlerinden arındırılmış, N11'in beklediği saf XML
-            n11_xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
-            <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
+            # 'sch:' etiketlerini GERİ GETİRİYORUZ! (N11 bu etiketler olmadan paketi tanıyamaz)
+            n11_xml_payload = f"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
                <soapenv:Header/>
                <soapenv:Body>
                   <sch:UpdateStockByStockSellerCodeRequest>
-                     <auth>
-                        <appKey>{N11_APP_KEY}</appKey>
-                        <appSecret>{N11_APP_SECRET}</appSecret>
-                     </auth>
-                     <stockItems>
-                        <stockItem>
-                           <sellerStockCode>{gercek_sku}</sellerStockCode>
-                           <quantity>{yeni_stok}</quantity>
-                        </stockItem>
-                     </stockItems>
+                     <sch:auth>
+                        <sch:appKey>{N11_APP_KEY}</sch:appKey>
+                        <sch:appSecret>{N11_APP_SECRET}</sch:appSecret>
+                     </sch:auth>
+                     <sch:stockItems>
+                        <sch:stockItem>
+                           <sch:sellerStockCode>{gercek_sku}</sch:sellerStockCode>
+                           <sch:quantity>{yeni_stok}</sch:quantity>
+                        </sch:stockItem>
+                     </sch:stockItems>
                   </sch:UpdateStockByStockSellerCodeRequest>
                </soapenv:Body>
             </soapenv:Envelope>"""
             
             n11_headers = {
-                "Content-Type": "text/xml; charset=utf-8"
+                "Content-Type": "text/xml; charset=utf-8",
+                "SOAPAction": "" # N11 SOAP mimarisinde bu başlık zorunludur!
             }
             
-            # Doğru Servis Uç Noktası: productService YERİNE stockService
-            n11_url = "https://api.n11.com/ws/stockService/"
+            # Uç noktayı tam standartlara göre düzeltiyoruz (Büyük S harfi ile)
+            n11_url = "https://api.n11.com/ws/StockService"
             
             n11_res = requests.post(n11_url, headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
             
             if n11_res.status_code == 200 and "<status>success</status>" in n11_res.text:
                 operasyon_raporu["n11_durumu"] = "Başarılı"
             else:
-                operasyon_raporu["n11_durumu"] = f"Başarısız (SOAP) - Yanıt: {n11_res.text[:150]}"
+                # Boş yanıt dönerse durumu anlayalım diye HTTP durum kodunu da rapora ekliyoruz
+                operasyon_raporu["n11_durumu"] = f"Başarısız (HTTP {n11_res.status_code}) - Yanıt: {n11_res.text[:150]}"
                 
         except Exception as e:
             operasyon_raporu["n11_durumu"] = f"Başarısız: N11'e bağlanılamadı. Hata: {str(e)}"
-
-    return {
-        "sistem_mesaji": "Çoklu kanal operasyonu tamamlandı.",
-        "iletilen_shopify_id": shopify_variant_id,
-        "kesfedilen_ortak_sku": gercek_sku,
-        "yeni_merkez_stok": yeni_stok,
-        "detayli_rapor": operasyon_raporu
-    }
