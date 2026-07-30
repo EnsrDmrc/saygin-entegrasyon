@@ -927,29 +927,29 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
     except Exception as e:
         operasyon_raporu["shopify_durumu"] = "Başarısız: Shopify'a bağlanılamadı."
 
-    # 3. N11 STOK GÜNCELLEMESİ (Nihai Hedef)
+    # 3. N11 STOK GÜNCELLEMESİ (Teşhis ve Zırh Modülü)
     if not gercek_sku:
         operasyon_raporu["n11_durumu"] = "Başarısız: Shopify'dan ortak SKU okunamadığı için N11'e gidilemedi."
     else:
         try:
-            N11_APP_KEY = os.getenv("N11_APP_KEY", "").strip()
-            N11_APP_SECRET = os.getenv("N11_APP_SECRET", "").strip()
+            # MÜHENDİSLİK DOKUNUŞU: Render'daki olası tüm tırnak (") ve boşluk hatalarını acımasızca temizliyoruz
+            N11_APP_KEY = os.getenv("N11_APP_KEY", "").replace('"', '').replace("'", "").strip()
+            N11_APP_SECRET = os.getenv("N11_APP_SECRET", "").replace('"', '').replace("'", "").strip()
             
-            # N11'in katı SOAP kuralları: Bütün sch: etiketleri yerli yerinde!
             n11_xml_payload = f"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
                <soapenv:Header/>
                <soapenv:Body>
                   <sch:UpdateStockByStockSellerCodeRequest>
-                     <sch:auth>
-                        <sch:appKey>{N11_APP_KEY}</sch:appKey>
-                        <sch:appSecret>{N11_APP_SECRET}</sch:appSecret>
-                     </sch:auth>
-                     <sch:stockItems>
-                        <sch:stockItem>
-                           <sch:sellerStockCode>{gercek_sku}</sch:sellerStockCode>
-                           <sch:quantity>{yeni_stok}</sch:quantity>
-                        </sch:stockItem>
-                     </sch:stockItems>
+                     <auth>
+                        <appKey>{N11_APP_KEY}</appKey>
+                        <appSecret>{N11_APP_SECRET}</appSecret>
+                     </auth>
+                     <stockItems>
+                        <stockItem>
+                           <sellerStockCode>{gercek_sku}</sellerStockCode>
+                           <quantity>{yeni_stok}</quantity>
+                        </stockItem>
+                     </stockItems>
                   </sch:UpdateStockByStockSellerCodeRequest>
                </soapenv:Body>
             </soapenv:Envelope>"""
@@ -959,8 +959,6 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
                 "SOAPAction": "" 
             }
             
-            # İŞTE ÇÖZÜM: Yönlendirme (redirect) tuzağına düşmemek için
-            # URL tamamen küçük harfli ve en sonunda '/' işareti var!
             n11_url = "https://api.n11.com/ws/stockService/"
             
             n11_res = requests.post(n11_url, headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
@@ -968,7 +966,10 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
             if n11_res.status_code == 200 and "<status>success</status>" in n11_res.text:
                 operasyon_raporu["n11_durumu"] = "Başarılı"
             else:
-                operasyon_raporu["n11_durumu"] = f"Başarısız (HTTP {n11_res.status_code}) - Yanıt: {n11_res.text[:150]}"
+                # ŞİFRELER GERÇEKTEN GİDİYOR MU? Güvenlik ihlali yapmadan karakter uzunluklarını rapora basıyoruz
+                k_len = len(N11_APP_KEY)
+                s_len = len(N11_APP_SECRET)
+                operasyon_raporu["n11_durumu"] = f"Başarısız (HTTP {n11_res.status_code}) - Yanıt: {n11_res.text[:80]} | Key Uzunluk: {k_len}, Secret Uzunluk: {s_len}"
                 
         except Exception as e:
             operasyon_raporu["n11_durumu"] = f"Başarısız: N11'e bağlanılamadı. Hata: {str(e)}"
