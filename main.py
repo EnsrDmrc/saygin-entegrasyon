@@ -953,7 +953,12 @@ def merkezi_stok_guncelle(sku: str, yeni_stok: int, db: Session = Depends(get_db
         if n11_res.status_code == 200:
             operasyon_raporu["n11_durumu"] = "Başarılı"
         else:
-            operasyon_raporu["n11_durumu"] = f"Başarısız: N11 API Hatası ({n11_res.status_code})"
+            try:
+                n11_hata_detayi = n11_res.json()
+            except:
+                n11_hata_detayi = n11_res.text
+            operasyon_raporu["n11_durumu"] = f"Başarısız (400) - N11 Diyor ki: {n11_hata_detayi}"
+            
     except Exception as e:
         operasyon_raporu["n11_durumu"] = "Başarısız: N11'e bağlanılamadı."
 
