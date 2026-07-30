@@ -888,7 +888,6 @@ def test_siparis_yarat(sku: str, adet: int = 1):
 @app.put("/merkezi-stok-guncelle/{shopify_variant_id}")
 def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session = Depends(get_db)):
     # 1. YEREL VERİTABANI GÜNCELLEMESİ (MERKEZ)
-    # (Şu anki test mimarimizde veritabanına bu uzun ID'yi SKU olarak kaydetmiştik)
     varyant = db.query(models.Variant).filter(models.Variant.sku == shopify_variant_id).first()
     
     if varyant:
@@ -901,7 +900,7 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
         "n11_durumu": "Bekliyor"
     }
 
-    gercek_sku = None # N11'e göndereceğimiz evrensel kodu tutacağımız değişken
+    gercek_sku = None 
 
     # 2. SHOPIFY STOK GÜNCELLEMESİ VE SKU OKUMA
     try:
@@ -909,12 +908,11 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
         SHOPIFY_STORE_URL = os.getenv("SHOPIFY_STORE_URL")
         headers = {"X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN, "Content-Type": "application/json"}
         
-        # Önce varyantın bilgilerini çekip hem Envanter ID'sini hem de Gerçek SKU'yu öğreniyoruz
         var_url = f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/variants/{shopify_variant_id}.json"
         var_res = requests.get(var_url, headers=headers).json()
         
         inv_item_id = var_res["variant"]["inventory_item_id"]
-        gercek_sku = var_res["variant"].get("sku") # Shopify'dan 'SGH-TEST-01' kodunu söküp alıyoruz!
+        gercek_sku = var_res["variant"].get("sku") 
 
         loc_res = requests.get(f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/locations.json", headers=headers).json()
         location_id = loc_res["locations"][0]["id"]
@@ -929,48 +927,46 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
     except Exception as e:
         operasyon_raporu["shopify_durumu"] = "Başarısız: Shopify'a bağlanılamadı."
 
-    # 3. N11 STOK GÜNCELLEMESİ (SOAP XML Ortak Dil İle)
+    # 3. N11 STOK GÜNCELLEMESİ (Nihai Doğru XML)
     if not gercek_sku:
         operasyon_raporu["n11_durumu"] = "Başarısız: Shopify'dan ortak SKU okunamadığı için N11'e gidilemedi."
     else:
         try:
-            # Şifreler temizlenmiş ve zırhlanmış durumda
             N11_APP_KEY = os.getenv("N11_APP_KEY", "").strip()
             N11_APP_SECRET = os.getenv("N11_APP_SECRET", "").strip()
             
-            # 'sch:' etiketlerini GERİ GETİRİYORUZ! (N11 bu etiketler olmadan paketi tanıyamaz)
+            # SADECE kök istekte sch: var. İçerideki auth ve stockItems kısımları tamamen saf!
             n11_xml_payload = f"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
                <soapenv:Header/>
                <soapenv:Body>
                   <sch:UpdateStockByStockSellerCodeRequest>
-                     <sch:auth>
-                        <sch:appKey>{N11_APP_KEY}</sch:appKey>
-                        <sch:appSecret>{N11_APP_SECRET}</sch:appSecret>
-                     </sch:auth>
-                     <sch:stockItems>
-                        <sch:stockItem>
-                           <sch:sellerStockCode>{gercek_sku}</sch:sellerStockCode>
-                           <sch:quantity>{yeni_stok}</sch:quantity>
-                        </sch:stockItem>
-                     </sch:stockItems>
+                     <auth>
+                        <appKey>{N11_APP_KEY}</appKey>
+                        <appSecret>{N11_APP_SECRET}</appSecret>
+                     </auth>
+                     <stockItems>
+                        <stockItem>
+                           <sellerStockCode>{gercek_sku}</sellerStockCode>
+                           <quantity>{yeni_stok}</quantity>
+                        </stockItem>
+                     </stockItems>
                   </sch:UpdateStockByStockSellerCodeRequest>
                </soapenv:Body>
             </soapenv:Envelope>"""
             
             n11_headers = {
                 "Content-Type": "text/xml; charset=utf-8",
-                "SOAPAction": "" # N11 SOAP mimarisinde bu başlık zorunludur!
+                "SOAPAction": "" 
             }
             
-            # Uç noktayı tam standartlara göre düzeltiyoruz (Büyük S harfi ile)
-            n11_url = "https://api.n11.com/ws/StockService"
+            # Servis URL'sini de tam istenen formata çektik
+            n11_url = "https://api.n11.com/ws/stockService"
             
             n11_res = requests.post(n11_url, headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
             
             if n11_res.status_code == 200 and "<status>success</status>" in n11_res.text:
                 operasyon_raporu["n11_durumu"] = "Başarılı"
             else:
-                # Boş yanıt dönerse durumu anlayalım diye HTTP durum kodunu da rapora ekliyoruz
                 operasyon_raporu["n11_durumu"] = f"Başarısız (HTTP {n11_res.status_code}) - Yanıt: {n11_res.text[:150]}"
                 
         except Exception as e:
