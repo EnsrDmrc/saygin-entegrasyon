@@ -934,8 +934,9 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
         operasyon_raporu["n11_durumu"] = "Başarısız: Shopify'dan ortak SKU okunamadığı için N11'e gidilemedi."
     else:
         try:
-            N11_APP_KEY = os.getenv("N11_APP_KEY")
-            N11_APP_SECRET = os.getenv("N11_APP_SECRET")
+            # Render'dan şifreyi çekerken başındaki ve sonundaki görünmez boşlukları (varsa) temizliyoruz
+            N11_APP_KEY = os.getenv("N11_APP_KEY", "").strip()
+            N11_APP_SECRET = os.getenv("N11_APP_SECRET", "").strip()
             
             # N11'in anladığı katı SOAP (XML) formatını inşa ediyoruz
             n11_xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
