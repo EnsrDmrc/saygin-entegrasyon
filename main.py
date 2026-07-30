@@ -927,7 +927,7 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
     except Exception as e:
         operasyon_raporu["shopify_durumu"] = "Başarısız: Shopify'a bağlanılamadı."
 
-    # 3. N11 STOK GÜNCELLEMESİ (NİHAİ VE KUSURSUZ MİMARİ)
+    # 3. N11 STOK GÜNCELLEMESİ (NİHAİ ÇÖZÜM)
     if not gercek_sku:
         operasyon_raporu["n11_durumu"] = "Başarısız: Shopify'dan ortak SKU okunamadığı için N11'e gidilemedi."
     else:
@@ -959,8 +959,8 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
                 "SOAPAction": "" 
             }
             
-            # Doğru adres kesinlikle budur (Eğik çizgi yok, küçük s harfi ile).
-            n11_url = "https://api.n11.com/ws/stockService"
+            # TEK EKSİK BURADAKİ EĞİK ÇİZGİYDİ (/)
+            n11_url = "https://api.n11.com/ws/stockService/"
             
             n11_res = requests.post(n11_url, headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
             
