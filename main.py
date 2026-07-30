@@ -975,3 +975,11 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
                 
         except Exception as e:
             operasyon_raporu["n11_durumu"] = f"Başarısız: N11'e bağlanılamadı. Hata: {str(e)}"
+
+    return {
+        "sistem_mesaji": "Çoklu kanal operasyonu tamamlandı.",
+        "iletilen_shopify_id": shopify_variant_id,
+        "kesfedilen_ortak_sku": gercek_sku,
+        "yeni_merkez_stok": yeni_stok,
+        "detayli_rapor": operasyon_raporu
+    }
