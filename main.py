@@ -927,7 +927,7 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
     except Exception as e:
         operasyon_raporu["shopify_durumu"] = "Başarısız: Shopify'a bağlanılamadı."
 
-    # 3. N11 STOK GÜNCELLEMESİ (Nihai Doğru XML)
+    # 3. N11 STOK GÜNCELLEMESİ (Nihai ve Kusursuz Aşama)
     if not gercek_sku:
         operasyon_raporu["n11_durumu"] = "Başarısız: Shopify'dan ortak SKU okunamadığı için N11'e gidilemedi."
     else:
@@ -935,7 +935,6 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
             N11_APP_KEY = os.getenv("N11_APP_KEY", "").strip()
             N11_APP_SECRET = os.getenv("N11_APP_SECRET", "").strip()
             
-            # SADECE kök istekte sch: var. İçerideki auth ve stockItems kısımları tamamen saf!
             n11_xml_payload = f"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
                <soapenv:Header/>
                <soapenv:Body>
@@ -959,8 +958,8 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
                 "SOAPAction": "" 
             }
             
-            # Servis URL'sini de tam istenen formata çektik
-            n11_url = "https://api.n11.com/ws/stockService"
+            # İŞTE BÜTÜN SORUN BURADAYDI! N11 URL'si kesinlikle .wsdl ile bitmek zorunda.
+            n11_url = "https://api.n11.com/ws/StockService.wsdl"
             
             n11_res = requests.post(n11_url, headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
             
