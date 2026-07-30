@@ -883,3 +883,83 @@ def test_siparis_yarat(sku: str, adet: int = 1):
             "hata": "Sipariş oluşturulamadı.", 
             "detay": response.json()
         }
+
+
+@app.put("/merkezi-stok-guncelle/{sku}")
+def merkezi_stok_guncelle(sku: str, yeni_stok: int, db: Session = Depends(get_db)):
+    # 1. YEREL VERİTABANI GÜNCELLEMESİ (MERKEZ)
+    varyant = db.query(models.Variant).filter(models.Variant.sku == sku).first()
+    
+    if not varyant:
+        return {"hata": "Bu SKU'ya ait varyant yerel veritabanında bulunamadı!"}
+
+    varyant.stock_quantity = yeni_stok
+    db.commit()
+
+    # Operasyon sonuçlarını anlık takip edeceğimiz sistem raporu
+    operasyon_raporu = {
+        "yerel_veritabani": "Başarılı",
+        "shopify_durumu": "Bekliyor",
+        "n11_durumu": "Bekliyor"
+    }
+
+    # 2. SHOPIFY STOK GÜNCELLEMESİ 
+    try:
+        SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+        SHOPIFY_STORE_URL = os.getenv("SHOPIFY_STORE_URL")
+        headers = {"X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN, "Content-Type": "application/json"}
+        
+        var_res = requests.get(f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/variants/{sku}.json", headers=headers).json()
+        inv_item_id = var_res["variant"]["inventory_item_id"]
+
+        loc_res = requests.get(f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/locations.json", headers=headers).json()
+        location_id = loc_res["locations"][0]["id"]
+
+        inv_set_url = f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/inventory_levels/set.json"
+        requests.post(inv_set_url, headers=headers, json={
+            "location_id": location_id,
+            "inventory_item_id": inv_item_id,
+            "available": yeni_stok 
+        })
+        operasyon_raporu["shopify_durumu"] = "Başarılı"
+    except Exception as e:
+        operasyon_raporu["shopify_durumu"] = "Başarısız: Shopify'a bağlanılamadı."
+
+    # 3. N11 STOK GÜNCELLEMESİ
+    try:
+        N11_APP_KEY = os.getenv("N11_APP_KEY")
+        N11_APP_SECRET = os.getenv("N11_APP_SECRET")
+        
+        n11_headers = {
+            "appKey": N11_APP_KEY,
+            "appSecret": N11_APP_SECRET,
+            "Content-Type": "application/json"
+        }
+        
+        # N11 REST API Stok Güncelleme Uç Noktası
+        n11_url = "https://api.n11.com/ws/rest/stock/updateStockByStockId"
+        
+        n11_payload = {
+            "stockItems": [
+                {
+                    "sellerStockCode": sku,
+                    "quantity": yeni_stok
+                }
+            ]
+        }
+        
+        n11_res = requests.post(n11_url, headers=n11_headers, json=n11_payload)
+        
+        if n11_res.status_code == 200:
+            operasyon_raporu["n11_durumu"] = "Başarılı"
+        else:
+            operasyon_raporu["n11_durumu"] = f"Başarısız: N11 API Hatası ({n11_res.status_code})"
+    except Exception as e:
+        operasyon_raporu["n11_durumu"] = "Başarısız: N11'e bağlanılamadı."
+
+    return {
+        "sistem_mesaji": "Çoklu kanal operasyonu tamamlandı.",
+        "urun_sku": sku,
+        "yeni_merkez_stok": yeni_stok,
+        "detayli_rapor": operasyon_raporu
+    }
