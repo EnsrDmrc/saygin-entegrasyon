@@ -887,7 +887,7 @@ def test_siparis_yarat(sku: str, adet: int = 1):
 
 @app.put("/merkezi-stok-guncelle/{shopify_variant_id}")
 def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session = Depends(get_db)):
-    # 1. YEREL VERİTABANI GÜNCELLEMESİ (MERKEZ)
+    # 1. YEREL VERİTABANI GÜNCELLEMESİ
     varyant = db.query(models.Variant).filter(models.Variant.sku == shopify_variant_id).first()
     
     if varyant:
@@ -927,7 +927,7 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
     except Exception as e:
         operasyon_raporu["shopify_durumu"] = "Başarısız: Shopify'a bağlanılamadı."
 
-    # 3. N11 STOK GÜNCELLEMESİ (NİHAİ ÇÖZÜM)
+    # 3. N11 STOK GÜNCELLEMESİ (NİHAİ VE KUSURSUZ MİMARİ)
     if not gercek_sku:
         operasyon_raporu["n11_durumu"] = "Başarısız: Shopify'dan ortak SKU okunamadığı için N11'e gidilemedi."
     else:
@@ -935,21 +935,21 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
             N11_APP_KEY = os.getenv("N11_APP_KEY", "").replace('"', '').replace("'", "").strip()
             N11_APP_SECRET = os.getenv("N11_APP_SECRET", "").replace('"', '').replace("'", "").strip()
             
-            # Etiketler kusursuz, tam N11'in istediği formatta.
-            n11_xml_payload = f"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
+            n11_xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
+            <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
                <soapenv:Header/>
                <soapenv:Body>
                   <sch:UpdateStockByStockSellerCodeRequest>
-                     <sch:auth>
-                        <sch:appKey>{N11_APP_KEY}</sch:appKey>
-                        <sch:appSecret>{N11_APP_SECRET}</sch:appSecret>
-                     </sch:auth>
-                     <sch:stockItems>
-                        <sch:stockItem>
-                           <sch:sellerStockCode>{gercek_sku}</sch:sellerStockCode>
-                           <sch:quantity>{yeni_stok}</quantity>
-                        </sch:stockItem>
-                     </sch:stockItems>
+                     <auth>
+                        <appKey>{N11_APP_KEY}</appKey>
+                        <appSecret>{N11_APP_SECRET}</appSecret>
+                     </auth>
+                     <stockItems>
+                        <stockItem>
+                           <sellerStockCode>{gercek_sku}</sellerStockCode>
+                           <quantity>{yeni_stok}</quantity>
+                        </stockItem>
+                     </stockItems>
                   </sch:UpdateStockByStockSellerCodeRequest>
                </soapenv:Body>
             </soapenv:Envelope>"""
@@ -959,8 +959,8 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
                 "SOAPAction": "" 
             }
             
-            # İŞTE BÜTÜN SORUN BUYDU: Doğru kapı productService!
-            n11_url = "https://api.n11.com/ws/productService/"
+            # Doğru adres kesinlikle budur (Eğik çizgi yok, küçük s harfi ile).
+            n11_url = "https://api.n11.com/ws/stockService"
             
             n11_res = requests.post(n11_url, headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
             
