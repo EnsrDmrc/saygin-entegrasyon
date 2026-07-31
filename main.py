@@ -1024,27 +1024,32 @@ def n11_siparisleri_cek(db: Session = Depends(get_db)):
         n11_res = requests.post(n11_url, headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
         
         if n11_res.status_code == 200:
-            # Gelen karmaşık metni XML ağacına dönüştürüyoruz
             root = ET.fromstring(n11_res.content)
-            
-            # N11'in kendi özel şema adresi (Namespace)
             ns = {'ns3': 'http://www.n11.com/ws/schemas'}
             
-            # Yanıtın başarılı olup olmadığını kontrol ediyoruz
-            status_tag = root.find('.//ns3:status', ns)
+            # MÜHENDİSLİK DÜZELTMESİ: Etiketi hem yalın hem de ön ekli arıyoruz
+            status_tag = root.find('.//status')
+            if status_tag is None:
+                status_tag = root.find('.//ns3:status', ns)
             
             if status_tag is not None and status_tag.text == 'success':
-                # Siparişleri buluyoruz
-                siparisler = root.findall('.//ns3:order', ns)
+                # Siparişleri arıyoruz
+                siparisler = root.findall('.//orderList/order')
+                if not siparisler:
+                    siparisler = root.findall('.//ns3:order', ns)
                 
                 if not siparisler:
                     return {"sistem_mesaji": "Devriye tamamlandi. Su an merkez stogu etkileyecek yeni bir N11 siparisi yok."}
                 
-                # Burada siparişlerin içindeki SKU'ları okuyup veritabanından düşme kodlarımız olacak.
-                # Şimdilik sadece kaç sipariş yakaladığımızı sayıyoruz.
                 return {"sistem_mesaji": f"Kritik: {len(siparisler)} adet yeni N11 siparisi tespit edildi!"}
             else:
-                return {"hata": "N11 sunucusu baglantiyi kabul etti fakat islem basarisiz oldu."}
+                # Gerçekten bir hata varsa N11'in kendi hata mesajını ekrana basıyoruz
+                error_msg = root.find('.//errorMessage')
+                if error_msg is None:
+                    error_msg = root.find('.//ns3:errorMessage', ns)
+                    
+                hata_metni = error_msg.text if error_msg is not None else "Bilinmeyen N11 hatasi."
+                return {"hata": f"N11 islemi reddetti: {hata_metni}"}
         else:
             return {"hata": f"HTTP {n11_res.status_code} - Baglanti sorunu."}
             
