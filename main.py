@@ -1039,18 +1039,48 @@ def n11_siparisleri_cek(db: Session = Depends(get_db)):
                 if not siparisler:
                     return {"sistem_mesaji": "Devriye tamamlandi. Su an merkez stogu etkileyecek yeni bir N11 siparisi yok."}
                 
-                # CANLI VERİ YAKALAYICI: İlk siparişin tüm XML içeriğini parçalamadan ekrana basıyoruz!
-                ilk_siparis_xml = ET.tostring(siparisler[0], encoding='unicode')
+                # --- ANA STOK DÜŞÜM MOTORU ---
+                islem_raporu = []
+                
+                for siparis in siparisler:
+                    kalemler = siparis.findall('.//orderItemList/orderItem')
+                    if not kalemler:
+                        kalemler = siparis.findall('.//ns3:orderItem', ns)
+                        
+                    for kalem in kalemler:
+                        # Görselden bulduğumuz gerçek etiketleri (productSellerCode ve quantity) çekiyoruz
+                        sku_tag = kalem.find('.//productSellerCode')
+                        if sku_tag is None:
+                            sku_tag = kalem.find('.//ns3:productSellerCode', ns)
+                            
+                        adet_tag = kalem.find('.//quantity')
+                        if adet_tag is None:
+                            adet_tag = kalem.find('.//ns3:quantity', ns)
+                            
+                        if sku_tag is not None and adet_tag is not None:
+                            stok_kodu = sku_tag.text.strip()
+                            satilan_adet = int(adet_tag.text)
+                            
+                            # Merkez Veritabanında (SQL) bu ürünü buluyoruz
+                            varyant = db.query(models.Variant).filter(models.Variant.sku == stok_kodu).first()
+                            
+                            if varyant:
+                                eski_stok = varyant.stock_quantity
+                                yeni_stok = eski_stok - satilan_adet
+                                varyant.stock_quantity = yeni_stok
+                                db.commit() # Değişikliği veritabanına kalıcı olarak yaz
+                                islem_raporu.append(f"BASARILI: {stok_kodu} stok miktari guncellendi ({eski_stok} -> {yeni_stok})")
+                            else:
+                                islem_raporu.append(f"HATA: {stok_kodu} kodlu urun yerel veritabaninda bulunamadi.")
                 
                 return {
-                    "sistem_mesaji": f"Kritik: {len(siparisler)} adet yeni N11 siparisi tespit edildi!",
-                    "ham_siparis_verisi": ilk_siparis_xml
+                    "sistem_mesaji": "Siparis devriyesi tamamlandi ve veritabani senkronize edildi.",
+                    "detaylar": islem_raporu
                 }
             else:
                 error_msg = root.find('.//errorMessage')
                 if error_msg is None:
                     error_msg = root.find('.//ns3:errorMessage', ns)
-                    
                 hata_metni = error_msg.text if error_msg is not None else "Bilinmeyen N11 hatasi."
                 return {"hata": f"N11 islemi reddetti: {hata_metni}"}
         else:
