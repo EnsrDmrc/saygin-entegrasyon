@@ -979,3 +979,61 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
         "yeni_merkez_stok": yeni_stok,
         "detayli_rapor": operasyon_raporu
     }
+
+
+@app.get("/n11-siparisleri-cek")
+def n11_siparisleri_cek():
+    try:
+        # N11 şifrelerimizi Render ortamından çekiyoruz
+        N11_APP_KEY = os.getenv("N11_APP_KEY", "").strip()
+        N11_APP_SECRET = os.getenv("N11_APP_SECRET", "").strip()
+        
+        # Son 3 günün siparişlerini taramak için tarih hesaplıyoruz
+        bugun = datetime.datetime.now().strftime("%d/%m/%Y")
+        uc_gun_once = (datetime.datetime.now() - datetime.timedelta(days=3)).strftime("%d/%m/%Y")
+        
+        # N11 Sipariş Çekme XML Paketi (Sadece "New" yani yeni siparişler)
+        n11_xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
+           <soapenv:Header/>
+           <soapenv:Body>
+              <sch:DetailedOrderListRequest>
+                 <auth>
+                    <appKey>{N11_APP_KEY}</appKey>
+                    <appSecret>{N11_APP_SECRET}</appSecret>
+                 </auth>
+                 <searchData>
+                    <status>New</status>
+                    <period>
+                       <startDate>{uc_gun_once}</startDate>
+                       <endDate>{bugun}</endDate>
+                    </period>
+                 </searchData>
+                 <pagingData>
+                    <currentPage>0</currentPage>
+                    <pageSize>100</pageSize>
+                 </pagingData>
+              </sch:DetailedOrderListRequest>
+           </soapenv:Body>
+        </soapenv:Envelope>"""
+        
+        n11_headers = {
+            "Content-Type": "text/xml; charset=utf-8",
+            "SOAPAction": "" 
+        }
+        
+        # Sipariş servisinin adresi (Daha önce savaştığımız stok servisinden tamamen farklı)
+        n11_url = "https://api.n11.com/ws/orderService/"
+        
+        # Paketi gönderiyoruz
+        n11_res = requests.post(n11_url, headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
+        
+        # Test Aşaması: Sadece N11'in bize ne cevap verdiğini ekrana basıyoruz
+        return {
+            "http_durum_kodu": n11_res.status_code,
+            "sistem_mesaji": "N11 siparis servisi kapisi calindi.",
+            "n11_ham_yanit": n11_res.text[:1000] # Gelen cevabın ilk 1000 karakterini alıyoruz
+        }
+        
+    except Exception as e:
+        return {"hata": f"Bir seyler ters gitti: {str(e)}"}
