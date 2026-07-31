@@ -1027,13 +1027,11 @@ def n11_siparisleri_cek(db: Session = Depends(get_db)):
             root = ET.fromstring(n11_res.content)
             ns = {'ns3': 'http://www.n11.com/ws/schemas'}
             
-            # MÜHENDİSLİK DÜZELTMESİ: Etiketi hem yalın hem de ön ekli arıyoruz
             status_tag = root.find('.//status')
             if status_tag is None:
                 status_tag = root.find('.//ns3:status', ns)
             
             if status_tag is not None and status_tag.text == 'success':
-                # Siparişleri arıyoruz
                 siparisler = root.findall('.//orderList/order')
                 if not siparisler:
                     siparisler = root.findall('.//ns3:order', ns)
@@ -1041,9 +1039,14 @@ def n11_siparisleri_cek(db: Session = Depends(get_db)):
                 if not siparisler:
                     return {"sistem_mesaji": "Devriye tamamlandi. Su an merkez stogu etkileyecek yeni bir N11 siparisi yok."}
                 
-                return {"sistem_mesaji": f"Kritik: {len(siparisler)} adet yeni N11 siparisi tespit edildi!"}
+                # CANLI VERİ YAKALAYICI: İlk siparişin tüm XML içeriğini parçalamadan ekrana basıyoruz!
+                ilk_siparis_xml = ET.tostring(siparisler[0], encoding='unicode')
+                
+                return {
+                    "sistem_mesaji": f"Kritik: {len(siparisler)} adet yeni N11 siparisi tespit edildi!",
+                    "ham_siparis_verisi": ilk_siparis_xml
+                }
             else:
-                # Gerçekten bir hata varsa N11'in kendi hata mesajını ekrana basıyoruz
                 error_msg = root.find('.//errorMessage')
                 if error_msg is None:
                     error_msg = root.find('.//ns3:errorMessage', ns)
