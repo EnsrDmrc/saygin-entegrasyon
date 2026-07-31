@@ -1013,6 +1013,33 @@ def merkez_stok_dagitici(stok_kodu: str, yeni_stok_adedi):
 @app.get("/sistemi-onar")
 def sistemi_onar(db: Session = Depends(get_db)):
     """Veritabanındaki SKU hatalarını çözer ve Shopify stok ID'lerini eşleştirir."""
+    
+    # --- 1. EMNİYET KİLİDİ: EKSİK KANALI OLUŞTUR (HATA ÇÖZÜMÜ) ---
+    merchant = db.query(models.Merchant).filter(models.Merchant.id == 1).first()
+    if not merchant:
+        merchant = models.Merchant(
+            id=1,
+            company_name="Saygın Grup Hırdavat",
+            email="info@saygingruphirdavat.com.tr",
+            hashed_password="entegrasyon_gecici_sifre_123"
+        )
+        db.add(merchant)
+        db.commit()
+        
+    shopify_channel = db.query(models.Channel).filter(models.Channel.id == 4).first()
+    if not shopify_channel:
+        shopify_channel = models.Channel(
+            id=4,
+            merchant_id=1, # Sahibi Saygın Grup
+            name="Shopify",
+            api_key="sistem_otomatik_olusturdu",
+            api_secret="sistem_otomatik_olusturdu"
+        )
+        db.add(shopify_channel)
+        db.commit()
+    # -------------------------------------------------------------
+
+    # --- 2. ASIL ONARIM VE EŞLEŞTİRME İŞLEMİ ---
     SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
     SHOPIFY_STORE_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
     
@@ -1027,12 +1054,12 @@ def sistemi_onar(db: Session = Depends(get_db)):
             
         for product in res.json().get('products', []):
             for variant in product.get('variants', []):
-                gercek_sku = variant.get('sku') # 3M1300-3 gibi gerçek kod
-                inv_id = variant.get('inventory_item_id') # Shopify stok takip kimliği
-                var_id = str(variant.get('id')) # Eski sistemin kaydettiği numara
+                gercek_sku = variant.get('sku')
+                inv_id = variant.get('inventory_item_id')
+                var_id = str(variant.get('id'))
                 
                 if gercek_sku and inv_id:
-                    # 1. Veritabanındaki eski ID'yi gerçek SKU ile değiştir
+                    # 1. Eski ID'yi gerçek SKU ile değiştir
                     db_var = db.query(models.Variant).filter(models.Variant.sku == var_id).first()
                     if db_var:
                         db_var.sku = gercek_sku
@@ -1050,7 +1077,7 @@ def sistemi_onar(db: Session = Depends(get_db)):
                             yeni_listing = models.ChannelListing(
                                 variant_id=db_var.id,
                                 channel_id=4,
-                                channel_product_id=str(inv_id), # Stok düşümü için kritik numara
+                                channel_product_id=str(inv_id), 
                                 channel_price=db_var.base_price
                             )
                             db.add(yeni_listing)
