@@ -661,20 +661,15 @@ def get_shopify_products():
 @app.get("/shopify/sync")
 def sync_shopify_products(db: Session = Depends(get_db)):
     SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+    SHOPIFY_STORE_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
     
-    url = f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/products.json?limit=250"
     headers = {
         "X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN,
         "Content-Type": "application/json"
     }
-    response = requests.get(url, headers=headers)
     
-    if response.status_code != 200:
-        return {"hata": "Shopify verisi çekilemedi."}
-        
-    products_data = response.json().get("products", [])
+    url = f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/products.json?limit=250"
     
-    # 1. Satıcı Kaydı
     merchant = db.query(models.Merchant).filter(models.Merchant.id == 1).first()
     if not merchant:
         merchant = models.Merchant(
@@ -690,46 +685,57 @@ def sync_shopify_products(db: Session = Depends(get_db)):
     yeni_urun_sayisi = 0
     yeni_varyant_sayisi = 0
 
-    # 2. Ürün ve Varyant Döngüsü
-    for item in products_data:
-        # Önce ürünü kontrol et veya ekle
-        mevcut_urun = db.query(models.Product).filter(models.Product.title == item.get("title")).first()
+    # DÖNGÜ BAŞLIYOR: Tüm sayfalar bitene kadar ürünleri çekmeye devam edecek
+    while url:
+        response = requests.get(url, headers=headers)
         
-        if not mevcut_urun:
-            yeni_urun = models.Product(
-                merchant_id=merchant.id,
-                title=item.get("title"),
-                brand=item.get("vendor")
-            )
-            db.add(yeni_urun)
-            db.commit()
-            db.refresh(yeni_urun)
-            urun_id = yeni_urun.id
-            yeni_urun_sayisi += 1
-        else:
-            urun_id = mevcut_urun.id
-
-        # Şimdi bu ürünün altındaki fiyat/stok bilgilerini (Varyantları) dönüyoruz
-        variants_data = item.get("variants", [])
-        for var in variants_data:
-            # Varyantı Shopify'ın kendi varyant ID'si ile kontrol ediyoruz ki mükerrer kayıt olmasın
-            shopify_variant_id = str(var.get("id"))
-            mevcut_varyant = db.query(models.Variant).filter(models.Variant.sku == shopify_variant_id).first()
+        if response.status_code != 200:
+            return {"hata": "Shopify verisi çekilemedi.", "detay": response.text}
             
-            if not mevcut_varyant:
-                yeni_varyant = models.Variant(
-                    product_id=urun_id,
-                    sku=shopify_variant_id, # Gerçek SKU boş olabileceği için şimdilik Shopify ID'sini SKU alanına yazıyoruz
-                    base_price=var.get("price"),
-                    stock_quantity=var.get("inventory_quantity") or 0
+        products_data = response.json().get("products", [])
+        
+        for item in products_data:
+            mevcut_urun = db.query(models.Product).filter(models.Product.title == item.get("title")).first()
+            
+            if not mevcut_urun:
+                yeni_urun = models.Product(
+                    merchant_id=merchant.id,
+                    title=item.get("title"),
+                    brand=item.get("vendor")
                 )
-                db.add(yeni_varyant)
-                yeni_varyant_sayisi += 1
+                db.add(yeni_urun)
+                db.commit()
+                db.refresh(yeni_urun)
+                urun_id = yeni_urun.id
+                yeni_urun_sayisi += 1
+            else:
+                urun_id = mevcut_urun.id
+
+            variants_data = item.get("variants", [])
+            for var in variants_data:
+                shopify_variant_id = str(var.get("id"))
+                mevcut_varyant = db.query(models.Variant).filter(models.Variant.sku == shopify_variant_id).first()
                 
-    db.commit() # Tüm varyantları tek seferde veritabanına işliyoruz
+                if not mevcut_varyant:
+                    yeni_varyant = models.Variant(
+                        product_id=urun_id,
+                        sku=shopify_variant_id, 
+                        base_price=var.get("price"),
+                        stock_quantity=var.get("inventory_quantity") or 0
+                    )
+                    db.add(yeni_varyant)
+                    yeni_varyant_sayisi += 1
+                    
+        db.commit()
+
+        # SAYFALAMA: 250'den sonraki sayfaya geçiş linkini bul
+        link_header = response.headers.get('Link')
+        url = None
+        if link_header and 'rel="next"' in link_header:
+            url = [link[link.find("<")+1:link.find(">")] for link in link_header.split(',') if 'rel="next"' in link][0]
 
     return {
-        "mesaj": "Fiyat ve Stok Senkronizasyonu Başarılı!",
+        "mesaj": "Sınırsız Tarama Tamamlandı! Fiyat ve Stok Senkronizasyonu Başarılı!",
         "yeni_eklenen_urun_sayisi": yeni_urun_sayisi,
         "yeni_eklenen_varyant_sayisi": yeni_varyant_sayisi
     }
