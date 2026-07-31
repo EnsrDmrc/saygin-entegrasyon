@@ -989,8 +989,8 @@ def n11_siparisleri_cek():
         N11_APP_SECRET = os.getenv("N11_APP_SECRET", "").strip()
         
         # Son 3 günün siparişlerini taramak için tarih hesaplıyoruz
-        bugun = datetime.datetime.now().strftime("%d/%m/%Y")
-        uc_gun_once = (datetime.datetime.now() - datetime.timedelta(days=3)).strftime("%d/%m/%Y")
+        bugun = datetime.now().strftime("%d/%m/%Y")
+        uc_gun_once = (datetime.now() - timedelta(days=3)).strftime("%d/%m/%Y")
         
         # N11 Sipariş Çekme XML Paketi (Sadece "New" yani yeni siparişler)
         n11_xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
