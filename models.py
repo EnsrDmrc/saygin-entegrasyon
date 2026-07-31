@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boo
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 
+
 Base = declarative_base()
 
 # --- YENİ EKLENEN: Sistemin En Tepesindeki Kullanıcı/Mağaza Tablosu ---

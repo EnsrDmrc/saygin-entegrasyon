@@ -17,7 +17,8 @@ import xml.etree.ElementTree as ET
 import requests
 from fastapi.responses import RedirectResponse
 from database import SessionLocal
-
+import psycopg2
+from psycopg2.extras import execute_values
 
 def get_db():
     db = SessionLocal()
@@ -1009,6 +1010,63 @@ def merkez_stok_dagitici(stok_kodu: str, yeni_stok_adedi):
         print(f"Dagitici Hatasi: {str(e)}")
         return {"durum": "hata", "detay": str(e)}
 
+@app.get("/sistemi-onar")
+def sistemi_onar(db: Session = Depends(get_db)):
+    """Veritabanındaki SKU hatalarını çözer ve Shopify stok ID'lerini eşleştirir."""
+    SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+    SHOPIFY_STORE_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
+    
+    headers = {"X-Shopify-Access-Token": SHOPIFY_ACCESS_TOKEN, "Content-Type": "application/json"}
+    url = f"https://{SHOPIFY_STORE_URL}/admin/api/2026-07/products.json?limit=250"
+    
+    guncellenen = 0
+    while url:
+        res = requests.get(url, headers=headers)
+        if res.status_code != 200:
+            return {"hata": "Shopify API bağlantı sorunu."}
+            
+        for product in res.json().get('products', []):
+            for variant in product.get('variants', []):
+                gercek_sku = variant.get('sku') # 3M1300-3 gibi gerçek kod
+                inv_id = variant.get('inventory_item_id') # Shopify stok takip kimliği
+                var_id = str(variant.get('id')) # Eski sistemin kaydettiği numara
+                
+                if gercek_sku and inv_id:
+                    # 1. Veritabanındaki eski ID'yi gerçek SKU ile değiştir
+                    db_var = db.query(models.Variant).filter(models.Variant.sku == var_id).first()
+                    if db_var:
+                        db_var.sku = gercek_sku
+                    else:
+                        db_var = db.query(models.Variant).filter(models.Variant.sku == gercek_sku).first()
+                        
+                    # 2. Shopify Eşleştirmesini (Kanal 4) ekle
+                    if db_var:
+                        listing = db.query(models.ChannelListing).filter(
+                            models.ChannelListing.variant_id == db_var.id,
+                            models.ChannelListing.channel_id == 4
+                        ).first()
+                        
+                        if not listing:
+                            yeni_listing = models.ChannelListing(
+                                variant_id=db_var.id,
+                                channel_id=4,
+                                channel_product_id=str(inv_id), # Stok düşümü için kritik numara
+                                channel_price=db_var.base_price
+                            )
+                            db.add(yeni_listing)
+                        else:
+                            listing.channel_product_id = str(inv_id)
+                            
+                        guncellenen += 1
+        db.commit()
+        
+        link_header = res.headers.get('Link')
+        url = None
+        if link_header and 'rel="next"' in link_header:
+            url = [link[link.find("<")+1:link.find(">")] for link in link_header.split(',') if 'rel="next"' in link][0]
+                    
+    return {"mesaj": f"Operasyon Tamam! Toplam {guncellenen} ürünün gerçek SKU'su onarıldı ve Shopify'a bağlandı."}
+
 @app.get("/n11-siparisleri-cek")
 def n11_siparisleri_cek(db: Session = Depends(get_db)):
     try:
@@ -1091,15 +1149,47 @@ def n11_siparisleri_cek(db: Session = Depends(get_db)):
                             # Merkez Veritabanında (SQL) bu ürünü buluyoruz
                             varyant = db.query(models.Variant).filter(models.Variant.sku == stok_kodu).first()
                             
+                            # --- DEĞİŞEN VE EKLENEN KISIM BURADAN BAŞLIYOR ---
                             if varyant:
+                                # 1. Merkez Veritabanını Güncelle
                                 eski_stok = varyant.stock_quantity
                                 yeni_stok = eski_stok - satilan_adet
                                 varyant.stock_quantity = yeni_stok
-                                db.commit() # Değişikliği veritabanına kalıcı olarak yaz
-                                islem_raporu.append(f"BASARILI: {stok_kodu} stok miktari guncellendi ({eski_stok} -> {yeni_stok})")
+                                db.commit() 
+                                islem_raporu.append(f"MERKEZ BAŞARILI: {stok_kodu} yerel stok güncellendi ({eski_stok} -> {yeni_stok})")
+                                
+                                # 2. SHOPIFY'A OTOMATİK BİLDİRİM GÖNDER
+                                listing = db.query(models.ChannelListing).filter(
+                                    models.ChannelListing.variant_id == varyant.id,
+                                    models.ChannelListing.channel_id == 4 # 4 numara Shopify kanalı
+                                ).first()
+                                
+                                if listing:
+                                    SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+                                    SHOPIFY_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
+                                    inventory_item_id = listing.channel_product_id
+                                    
+                                    # Önce Shopify'daki lokasyon ID'ni alıyoruz
+                                    loc_res = requests.get(f"https://{SHOPIFY_URL}/admin/api/2026-07/locations.json", headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN})
+                                    if loc_res.status_code == 200:
+                                        loc_id = loc_res.json()["locations"][0]["id"]
+                                        
+                                        # Stoğu Shopify'a gönder
+                                        inv_url = f"https://{SHOPIFY_URL}/admin/api/2026-07/inventory_levels/set.json"
+                                        inv_res = requests.post(inv_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json={
+                                            "location_id": loc_id,
+                                            "inventory_item_id": inventory_item_id,
+                                            "available": yeni_stok
+                                        })
+                                        
+                                        if inv_res.status_code == 200:
+                                            islem_raporu.append(f"SHOPIFY BAŞARILI: {stok_kodu} vitrin stoğu {yeni_stok} adet olarak eşitlendi.")
+                                        else:
+                                            islem_raporu.append(f"SHOPIFY HATASI: Stok güncellenemedi. Hata: {inv_res.text}")
                             else:
                                 islem_raporu.append(f"HATA: {stok_kodu} kodlu urun yerel veritabaninda bulunamadi.")
-                
+                            # --- DEĞİŞEN KISIM BURADA BİTİYOR ---
+                                
                 return {
                     "sistem_mesaji": "Siparis devriyesi tamamlandi ve veritabani senkronize edildi.",
                     "detaylar": islem_raporu
