@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import os
+import xml.etree.ElementTree as ET
 import requests
 from fastapi.responses import RedirectResponse
 from database import SessionLocal
@@ -982,17 +983,14 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
 
 
 @app.get("/n11-siparisleri-cek")
-def n11_siparisleri_cek():
+def n11_siparisleri_cek(db: Session = Depends(get_db)):
     try:
-        # N11 şifrelerimizi Render ortamından çekiyoruz
         N11_APP_KEY = os.getenv("N11_APP_KEY", "").strip()
         N11_APP_SECRET = os.getenv("N11_APP_SECRET", "").strip()
         
-        # Son 3 günün siparişlerini taramak için tarih hesaplıyoruz
         bugun = datetime.now().strftime("%d/%m/%Y")
         uc_gun_once = (datetime.now() - timedelta(days=3)).strftime("%d/%m/%Y")
         
-        # N11 Sipariş Çekme XML Paketi (Sadece "New" yani yeni siparişler)
         n11_xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
         <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
            <soapenv:Header/>
@@ -1022,18 +1020,33 @@ def n11_siparisleri_cek():
             "SOAPAction": "" 
         }
         
-        # Sipariş servisinin adresi (Daha önce savaştığımız stok servisinden tamamen farklı)
         n11_url = "https://api.n11.com/ws/orderService/"
-        
-        # Paketi gönderiyoruz
         n11_res = requests.post(n11_url, headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
         
-        # Test Aşaması: Sadece N11'in bize ne cevap verdiğini ekrana basıyoruz
-        return {
-            "http_durum_kodu": n11_res.status_code,
-            "sistem_mesaji": "N11 siparis servisi kapisi calindi.",
-            "n11_ham_yanit": n11_res.text[:1000] # Gelen cevabın ilk 1000 karakterini alıyoruz
-        }
-        
+        if n11_res.status_code == 200:
+            # Gelen karmaşık metni XML ağacına dönüştürüyoruz
+            root = ET.fromstring(n11_res.content)
+            
+            # N11'in kendi özel şema adresi (Namespace)
+            ns = {'ns3': 'http://www.n11.com/ws/schemas'}
+            
+            # Yanıtın başarılı olup olmadığını kontrol ediyoruz
+            status_tag = root.find('.//ns3:status', ns)
+            
+            if status_tag is not None and status_tag.text == 'success':
+                # Siparişleri buluyoruz
+                siparisler = root.findall('.//ns3:order', ns)
+                
+                if not siparisler:
+                    return {"sistem_mesaji": "Devriye tamamlandi. Su an merkez stogu etkileyecek yeni bir N11 siparisi yok."}
+                
+                # Burada siparişlerin içindeki SKU'ları okuyup veritabanından düşme kodlarımız olacak.
+                # Şimdilik sadece kaç sipariş yakaladığımızı sayıyoruz.
+                return {"sistem_mesaji": f"Kritik: {len(siparisler)} adet yeni N11 siparisi tespit edildi!"}
+            else:
+                return {"hata": "N11 sunucusu baglantiyi kabul etti fakat islem basarisiz oldu."}
+        else:
+            return {"hata": f"HTTP {n11_res.status_code} - Baglanti sorunu."}
+            
     except Exception as e:
         return {"hata": f"Bir seyler ters gitti: {str(e)}"}
