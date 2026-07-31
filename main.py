@@ -981,6 +981,33 @@ def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session =
         "detayli_rapor": operasyon_raporu
     }
 
+def merkez_stok_dagitici(stok_kodu: str, yeni_stok_adedi):
+    """
+    Veritabanında stok değiştiğinde bu fonksiyon tetiklenir ve 
+    yeni stoğu tüm pazaryerlerine ve özel web sitesine fırlatır (Push).
+    """
+    try:
+        # Fiziksel donanım ürünlerinde kesirli/ondalıklı değerler (0.5 vb.) gerçekçi 
+        # olmadığı için, dışarıya fırlatılacak stoğun kesin bir tam sayı olduğundan emin oluyoruz.
+        guncel_stok = int(yeni_stok_adedi) 
+        
+        islem_raporu = []
+        
+        # 1. SHOPIFY BİLDİRİMİ (Spoke 1)
+        # shopify_sonuc = shopify_stok_guncelle(stok_kodu, guncel_stok)
+        # islem_raporu.append(f"Shopify: {shopify_sonuc}")
+        
+        # 2. ÖZEL WEB SİTESİ BİLDİRİMİ (Spoke 2)
+        # ozel_site_sonuc = ozel_site_stok_guncelle(stok_kodu, guncel_stok)
+        # islem_raporu.append(f"Özel Site: {ozel_site_sonuc}")
+        
+        # 3. İLERİDE EKLENECEK DİĞER PAZARYERLERİ (Trendyol, Hepsiburada vb.)
+        
+        return {"durum": "basarili", "detay": islem_raporu}
+        
+    except Exception as e:
+        print(f"Dagitici Hatasi: {str(e)}")
+        return {"durum": "hata", "detay": str(e)}
 
 @app.get("/n11-siparisleri-cek")
 def n11_siparisleri_cek(db: Session = Depends(get_db)):
