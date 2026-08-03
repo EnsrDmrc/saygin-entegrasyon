@@ -1339,3 +1339,30 @@ def genel_stok_esitle_tetikle(background_tasks: BackgroundTasks):
         "mesaj": "Sistem emri aldı! Stok eşitleme operasyonu arka planda başlatıldı.",
         "detay": "Tüm ürünlerin taranıp güncellenmesi yaklaşık 3-5 dakika sürecektir. Bu sekmeyi güvenle kapatabilirsiniz."
     }
+
+
+@app.get("/urun-bul")
+def urun_bul(kelime: str = "", db: Session = Depends(get_db)):
+    """İsme göre ürün arayıp Shopify ID'sini bulmayı sağlar."""
+    # Ürünler ve Varyantlar tablolarını birleştirerek arama yapıyoruz
+    sorgu = db.query(models.Variant).join(models.Product)
+    
+    if kelime:
+        # Ürün adında, yazılan kelimeyi içerenleri (büyük/küçük harf duyarsız) filtrele
+        sorgu = sorgu.filter(models.Product.title.ilike(f"%{kelime}%"))
+        
+    # Ekrana yüzlerce ürün yığılmasın diye ilk 50 sonucu getiriyoruz
+    varyantlar = sorgu.limit(50).all() 
+    
+    sonuclar = []
+    for v in varyantlar:
+        sonuclar.append({
+            "Urun_Adi": v.product.title if v.product else "Bilinmeyen Ürün",
+            "Shopify_Varyant_ID": v.sku,  # Kurduğumuz yapıda Shopify ID'si SKU alanına kaydediliyor
+            "Mevcut_Merkez_Stok": int(v.stock_quantity) # Hırdavat ürünlerinde küsurat olmaması için tam sayıya kilitliyoruz
+        })
+        
+    return {
+        "mesaj": f"'{kelime}' araması için {len(sonuclar)} sonuç bulundu." if kelime else "Sistemdeki son 50 ürün listeleniyor.",
+        "urunler": sonuclar
+    }
