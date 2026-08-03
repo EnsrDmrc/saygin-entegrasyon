@@ -1554,3 +1554,28 @@ def veritabani_tablosu(db: Session = Depends(get_db)):
     """
     
     return HTMLResponse(content=html_content, status_code=200)
+
+
+
+@app.get("/stok-onar/{stok_kodu}")
+def stok_onar(stok_kodu: str, gercek_stok: int, db: Session = Depends(get_db)):
+    """Manuel olarak bozulan veya sayımda farklı çıkan stoğu hedef değere kilitler."""
+    # Stok kodunu her ihtimale karşı büyük harfe çevirerek arıyoruz
+    varyant = db.query(models.Variant).filter(models.Variant.sku == stok_kodu.upper()).first()
+    
+    if not varyant:
+        return {
+            "durum": "BAŞARISIZ", 
+            "mesaj": f"Veritabanında '{stok_kodu.upper()}' kodlu bir ürün bulunamadı. Kodu kontrol edip tekrar dene."
+        }
+        
+    eski_hatali_stok = varyant.stock_quantity
+    varyant.stock_quantity = gercek_stok
+    db.commit()
+    
+    return {
+        "durum": "ONARIM BAŞARILI",
+        "mesaj": f"{stok_kodu.upper()} kodlu ürünün stoğu merkeze başarıyla işlendi.",
+        "degisim_raporu": f"Eski Stok: {int(eski_hatali_stok)} -> Yeni Gerçek Stok: {gercek_stok}",
+        "sonraki_adim": "Vitrinleri (Shopify ve N11) bu yeni rakamla eşitlemek için lütfen /genel-stok-esitle motorunu çalıştır."
+    }
