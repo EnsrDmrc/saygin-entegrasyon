@@ -20,6 +20,7 @@ from database import SessionLocal
 import psycopg2
 from psycopg2.extras import execute_values
 import time
+from fastapi import BackgroundTasks
 
 def get_db():
     db = SessionLocal()
@@ -1263,87 +1264,78 @@ def n11_siparisleri_cek(db: Session = Depends(get_db)):
         return {"hata": f"Bir seyler ters gitti: {str(e)}"}
 
 
+# --- 1. PARÇA: ARKA PLAN MOTORU ---
+def arka_planda_stok_esitle():
+    db = SessionLocal()
+    try:
+        SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+        SHOPIFY_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
+        N11_APP_KEY = os.getenv("N11_APP_KEY", "").strip()
+        N11_APP_SECRET = os.getenv("N11_APP_SECRET", "").strip()
+
+        loc_id = None
+        if SHOPIFY_TOKEN:
+            loc_res = requests.get(f"https://{SHOPIFY_URL}/admin/api/2026-07/locations.json", headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN})
+            if loc_res.status_code == 200:
+                loc_id = loc_res.json()["locations"][0]["id"]
+
+        varyantlar = db.query(models.Variant).all()
+        print(f"\n--- 🔄 ARKA PLAN: {len(varyantlar)} ÜRÜN İÇİN GENEL STOK EŞİTLEME BAŞLADI ---")
+        
+        for varyant in varyantlar:
+            guncel_stok = int(varyant.stock_quantity) 
+            gercek_sku = varyant.sku
+
+            # === SHOPIFY ===
+            listing = db.query(models.ChannelListing).filter(
+                models.ChannelListing.variant_id == varyant.id,
+                models.ChannelListing.channel_id == 4
+            ).first()
+
+            if listing and loc_id:
+                inv_url = f"https://{SHOPIFY_URL}/admin/api/2026-07/inventory_levels/set.json"
+                requests.post(inv_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json={
+                    "location_id": loc_id,
+                    "inventory_item_id": listing.channel_product_id,
+                    "available": guncel_stok
+                })
+
+            # === N11 ===
+            if gercek_sku and N11_APP_KEY:
+                n11_xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
+                <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
+                   <soapenv:Header/>
+                   <soapenv:Body>
+                      <sch:UpdateStockByStockSellerCodeRequest>
+                         <auth>
+                            <appKey>{N11_APP_KEY}</appKey>
+                            <appSecret>{N11_APP_SECRET}</appSecret>
+                         </auth>
+                         <stockItems>
+                            <stockItem>
+                               <sellerStockCode>{gercek_sku}</sellerStockCode>
+                               <quantity>{guncel_stok}</quantity>
+                            </stockItem>
+                         </stockItems>
+                      </sch:UpdateStockByStockSellerCodeRequest>
+                   </soapenv:Body>
+                </soapenv:Envelope>"""
+                n11_headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": ""}
+                requests.post("https://api.n11.com/ws/stockService/", headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
+                    
+            time.sleep(0.2)
+
+        print("--- 🔄 ARKA PLAN: GENEL STOK EŞİTLEME BAŞARIYLA TAMAMLANDI ---\n")
+    except Exception as e:
+        print(f"Eşitleme Hatası: {str(e)}")
+    finally:
+        db.close() 
+
+# --- 2. PARÇA: TARAYICIDAN TETİKLENECEK ŞALTER ---
 @app.get("/genel-stok-esitle")
-def genel_stok_esitle(db: Session = Depends(get_db)):
-    """Merkez veritabanındaki stokları baz alarak Shopify ve N11'i zorla eşitler."""
-    
-    SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
-    SHOPIFY_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
-    N11_APP_KEY = os.getenv("N11_APP_KEY", "").strip()
-    N11_APP_SECRET = os.getenv("N11_APP_SECRET", "").strip()
-
-    # 1. Shopify Lokasyon ID'sini sadece bir kere (döngüye girmeden önce) alıyoruz ki sistemi yormayalım
-    loc_id = None
-    if SHOPIFY_TOKEN:
-        loc_res = requests.get(f"https://{SHOPIFY_URL}/admin/api/2026-07/locations.json", headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN})
-        if loc_res.status_code == 200:
-            loc_id = loc_res.json()["locations"][0]["id"]
-
-    # 2. Yerel veritabanındaki TÜM stok kartlarını (varyantları) çekiyoruz
-    varyantlar = db.query(models.Variant).all()
-    
-    basarili_shopify = 0
-    basarili_n11 = 0
-    
-    print("\n--- 🔄 GENEL STOK EŞİTLEME MOTORU BAŞLADI ---")
-    
-    for varyant in varyantlar:
-        # Hırdavat ve fiziksel ürünlerde kesirli/ondalıklı bir değer olamayacağı için sayıyı net tam sayıya (integer) kilitliyoruz.
-        guncel_stok = int(varyant.stock_quantity) 
-        gercek_sku = varyant.sku
-
-        # === SHOPIFY EŞİTLEMESİ ===
-        listing = db.query(models.ChannelListing).filter(
-            models.ChannelListing.variant_id == varyant.id,
-            models.ChannelListing.channel_id == 4 # Shopify Kanalı
-        ).first()
-
-        if listing and loc_id:
-            inv_url = f"https://{SHOPIFY_URL}/admin/api/2026-07/inventory_levels/set.json"
-            shop_res = requests.post(inv_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json={
-                "location_id": loc_id,
-                "inventory_item_id": listing.channel_product_id,
-                "available": guncel_stok
-            })
-            if shop_res.status_code == 200:
-                basarili_shopify += 1
-
-        # === N11 EŞİTLEMESİ ===
-        if gercek_sku and N11_APP_KEY:
-            n11_xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
-            <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
-               <soapenv:Header/>
-               <soapenv:Body>
-                  <sch:UpdateStockByStockSellerCodeRequest>
-                     <auth>
-                        <appKey>{N11_APP_KEY}</appKey>
-                        <appSecret>{N11_APP_SECRET}</appSecret>
-                     </auth>
-                     <stockItems>
-                        <stockItem>
-                           <sellerStockCode>{gercek_sku}</sellerStockCode>
-                           <quantity>{guncel_stok}</quantity>
-                        </stockItem>
-                     </stockItems>
-                  </sch:UpdateStockByStockSellerCodeRequest>
-               </soapenv:Body>
-            </soapenv:Envelope>"""
-            
-            n11_headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": ""}
-            n11_url = "https://api.n11.com/ws/stockService/"
-            
-            n11_res = requests.post(n11_url, headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
-            if n11_res.status_code == 200 and "<status>success</status>" in n11_res.text:
-                basarili_n11 += 1
-                
-        # API'lerin (Özellikle Shopify) saniye başına istek sınırını aşmamak ve banlanmamak için çok kısa bir es veriyoruz.
-        time.sleep(0.2)
-
-    print("--- 🔄 GENEL STOK EŞİTLEME TAMAMLANDI ---\n")
-
+def genel_stok_esitle_tetikle(background_tasks: BackgroundTasks):
+    background_tasks.add_task(arka_planda_stok_esitle)
     return {
-        "mesaj": "Sistemdeki tüm pazar yerleri yerel veritabanı ile eşitlendi!",
-        "taranan_urun_sayisi": len(varyantlar),
-        "esitlenen_shopify_sayisi": basarili_shopify,
-        "esitlenen_n11_sayisi": basarili_n11
+        "mesaj": "Sistem emri aldı! Stok eşitleme operasyonu arka planda başlatıldı.",
+        "detay": "Tüm ürünlerin taranıp güncellenmesi yaklaşık 3-5 dakika sürecektir. Bu sekmeyi güvenle kapatabilirsiniz."
     }
