@@ -1435,3 +1435,46 @@ def kopyalari_temizle(db: Session = Depends(get_db)):
         "mesaj": f"Operasyon tamamlandı! Toplam {silinen_kayit_sayisi} adet mükerrer kopya ve bunlara bağlı alt kayıtlar veritabanından kalıcı olarak silindi.",
         "kalan_saglam_urun_sayisi": len(islenen_skular)
     }
+
+
+@app.get("/sku-birlestir")
+def sku_birlestir(db: Session = Depends(get_db)):
+    """Aynı SKU'ya sahip farklı varyant kayıtlarını tek bir ana kayıt altında birleştirir."""
+    varyantlar = db.query(models.Variant).all()
+    
+    # SKU'ları gruplamak için bir sözlük oluşturuyoruz
+    sku_gruplari = {}
+    for varyant in varyantlar:
+        if varyant.sku:
+            if varyant.sku not in sku_gruplari:
+                sku_gruplari[varyant.sku] = []
+            sku_gruplari[varyant.sku].append(varyant)
+            
+    birlestirilen_kayit_sayisi = 0
+    kalan_essiz_sku_sayisi = 0
+    
+    for sku, v_list in sku_gruplari.items():
+        kalan_essiz_sku_sayisi += 1
+        # Eğer bir SKU'dan 1'den fazla kayıt varsa birleştirme yap
+        if len(v_list) > 1:
+            ana_varyant = v_list[0] # İlk kaydı merkez (patron) olarak kabul et
+            silinecek_kopyalar = v_list[1:] # Geri kalanları silinecekler listesine al
+            
+            for kopya in silinecek_kopyalar:
+                # 1. ADIM: Kopya varyanta bağlı pazaryeri kayıtlarını (N11/Shopify) ana varyanta bağla
+                db.query(models.ChannelListing).filter(
+                    models.ChannelListing.variant_id == kopya.id
+                ).update({"variant_id": ana_varyant.id}, synchronize_session=False)
+                
+                # 2. ADIM: İçi boşalan ve yetim kalan kopya varyantı veritabanından tamamen sil
+                db.delete(kopya)
+                birlestirilen_kayit_sayisi += 1
+                
+    # Tüm güncellemeleri kalıcı olarak kaydet
+    db.commit()
+    
+    return {
+        "durum": "BİRLEŞTİRME BAŞARILI",
+        "mesaj": f"Sistemdeki ayrı düşmüş kayıtlar aynı SKU çatısı altında birleştirildi. Toplam {birlestirilen_kayit_sayisi} adet fazla kayıt eritildi.",
+        "guncel_gercek_urun_sayisi": kalan_essiz_sku_sayisi
+    }
