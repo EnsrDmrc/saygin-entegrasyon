@@ -895,7 +895,7 @@ def test_siparis_yarat(sku: str, adet: int = 1):
         }
 
 
-@app.put("/merkezi-stok-guncelle/{shopify_variant_id}")
+@app.get("/merkezi-stok-guncelle/{shopify_variant_id}")
 def merkezi_stok_guncelle(shopify_variant_id: str, yeni_stok: int, db: Session = Depends(get_db)):
     # 1. YEREL VERİTABANI GÜNCELLEMESİ
     varyant = db.query(models.Variant).filter(models.Variant.sku == shopify_variant_id).first()
