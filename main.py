@@ -1437,14 +1437,27 @@ def kopyalari_temizle(db: Session = Depends(get_db)):
     }
 
 
-@app.get("/sku-birlestir")
-def sku_birlestir(db: Session = Depends(get_db)):
-    """Aynı SKU'ya sahip farklı varyant kayıtlarını tek bir ana kayıt altında birleştirir."""
+@app.get("/sku-normalize-birlestir")
+def sku_normalize_birlestir(db: Session = Depends(get_db)):
+    """Tüm SKU'ları büyük harfe çevirip boşlukları temizler, ardından gizli kopyaları birleştirir."""
     varyantlar = db.query(models.Variant).all()
     
-    # SKU'ları gruplamak için bir sözlük oluşturuyoruz
-    sku_gruplari = {}
+    # ADIM 1: Ütüleme İşlemi (Boşlukları sil ve her şeyi BÜYÜK HARF yap)
     for varyant in varyantlar:
+        if varyant.sku:
+            # Örneğin: '  3m1300  ' şeklindeki bozuk bir kodu '3M1300' yapar
+            normalize_edilmis_sku = str(varyant.sku).strip().upper()
+            if varyant.sku != normalize_edilmis_sku:
+                varyant.sku = normalize_edilmis_sku
+    
+    # İsim standartlaştırmalarını veritabanına kaydet ki gruplama düzgün çalışsın
+    db.commit()
+    
+    # ADIM 2: Yeni ve temiz kodlara göre gruplama yap
+    sku_gruplari = {}
+    guncel_varyantlar = db.query(models.Variant).all()
+    
+    for varyant in guncel_varyantlar:
         if varyant.sku:
             if varyant.sku not in sku_gruplari:
                 sku_gruplari[varyant.sku] = []
@@ -1453,28 +1466,29 @@ def sku_birlestir(db: Session = Depends(get_db)):
     birlestirilen_kayit_sayisi = 0
     kalan_essiz_sku_sayisi = 0
     
+    # ADIM 3: Aynı çatı altında topla ve fazlalıkları sil
     for sku, v_list in sku_gruplari.items():
         kalan_essiz_sku_sayisi += 1
-        # Eğer bir SKU'dan 1'den fazla kayıt varsa birleştirme yap
+        
         if len(v_list) > 1:
-            ana_varyant = v_list[0] # İlk kaydı merkez (patron) olarak kabul et
-            silinecek_kopyalar = v_list[1:] # Geri kalanları silinecekler listesine al
+            ana_varyant = v_list[0] # İlkini patron kabul et
+            silinecek_kopyalar = v_list[1:] 
             
             for kopya in silinecek_kopyalar:
-                # 1. ADIM: Kopya varyanta bağlı pazaryeri kayıtlarını (N11/Shopify) ana varyanta bağla
+                # Kopya üzerindeki pazaryeri şubelerini (N11/Shopify) patrona devret
                 db.query(models.ChannelListing).filter(
                     models.ChannelListing.variant_id == kopya.id
                 ).update({"variant_id": ana_varyant.id}, synchronize_session=False)
                 
-                # 2. ADIM: İçi boşalan ve yetim kalan kopya varyantı veritabanından tamamen sil
+                # İçini boşalttığımız kopyayı yok et
                 db.delete(kopya)
                 birlestirilen_kayit_sayisi += 1
                 
-    # Tüm güncellemeleri kalıcı olarak kaydet
+    # Silme ve birleştirme işlemlerini kalıcı yap
     db.commit()
     
     return {
-        "durum": "BİRLEŞTİRME BAŞARILI",
-        "mesaj": f"Sistemdeki ayrı düşmüş kayıtlar aynı SKU çatısı altında birleştirildi. Toplam {birlestirilen_kayit_sayisi} adet fazla kayıt eritildi.",
+        "durum": "STANDARTLAŞTIRMA VE BİRLEŞTİRME BAŞARILI",
+        "mesaj": f"Tüm stok kodları temizlendi ve büyük harfe çevrildi. Toplam {birlestirilen_kayit_sayisi} adet gizli kopya birleştirildi.",
         "guncel_gercek_urun_sayisi": kalan_essiz_sku_sayisi
     }
