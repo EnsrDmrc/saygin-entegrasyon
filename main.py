@@ -1366,3 +1366,41 @@ def urun_bul(kelime: str = "", db: Session = Depends(get_db)):
         "mesaj": f"'{kelime}' araması için {len(sonuclar)} sonuç bulundu." if kelime else "Sistemdeki son 50 ürün listeleniyor.",
         "urunler": sonuclar
     }
+
+
+@app.get("/kopya-kontrol")
+def kopya_kontrol(db: Session = Depends(get_db)):
+    """Veritabanındaki tüm ürünleri tarayarak mükerrer SKU (Stok Kodu) kaydı olup olmadığını denetler."""
+    varyantlar = db.query(models.Variant).all()
+    
+    sku_havuzu = {}
+    kopya_listesi = []
+    
+    # Adım 1: Bütün stok kodlarını tek tek sayıyoruz
+    for varyant in varyantlar:
+        if varyant.sku: # Eğer ürünün bir stok kodu varsa
+            if varyant.sku in sku_havuzu:
+                sku_havuzu[varyant.sku] += 1
+            else:
+                sku_havuzu[varyant.sku] = 1
+                
+    # Adım 2: Sayısı 1'den fazla olanları (kopyaları) yakalıyoruz
+    for sku, adet in sku_havuzu.items():
+        if adet > 1:
+            kopya_listesi.append({
+                "Stok_Kodu": sku, 
+                "Veritabanindaki_Kayit_Sayisi": adet
+            })
+            
+    # Adım 3: Sonucu raporluyoruz
+    if not kopya_listesi:
+        return {
+            "durum": "BAŞARILI",
+            "mesaj": f"Harika haber! Taranan {len(varyantlar)} ürün arasında hiçbir mükerrer (kopya) stok kodu bulunamadı. Veritabanı tertemiz."
+        }
+        
+    return {
+        "durum": "UYARI",
+        "mesaj": f"Sistemde {len(kopya_listesi)} adet ürünün birden fazla kaydı tespit edildi!",
+        "kopya_detaylari": kopya_listesi
+    }
