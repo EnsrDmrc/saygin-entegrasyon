@@ -1408,7 +1408,7 @@ def kopya_kontrol(db: Session = Depends(get_db)):
 
 @app.get("/kopyalari-temizle")
 def kopyalari_temizle(db: Session = Depends(get_db)):
-    """Veritabanındaki mükerrer varyantları temizler, her stok kodundan sadece 1 tane bırakır."""
+    """Veritabanındaki mükerrer varyantları ve onlara bağlı yetim kalacak listelemeleri temizler."""
     varyantlar = db.query(models.Variant).all()
     
     silinen_kayit_sayisi = 0
@@ -1417,11 +1417,14 @@ def kopyalari_temizle(db: Session = Depends(get_db)):
     for varyant in varyantlar:
         if varyant.sku:
             if varyant.sku in islenen_skular:
-                # Bu SKU'yu daha önce listeye ekledik, demek ki bu satır bir kopya. Hemen sil!
+                # 1. ADIM: Önce bu kopya varyanta bağlı olan channel_listings (pazaryeri listeleme) kayıtlarını sil
+                db.query(models.ChannelListing).filter(models.ChannelListing.variant_id == varyant.id).delete(synchronize_session=False)
+                
+                # 2. ADIM: Alt bağlar koptuğuna göre artık asıl kopyayı güvenle silebiliriz
                 db.delete(varyant)
                 silinen_kayit_sayisi += 1
             else:
-                # Bu SKU'yu ilk defa görüyoruz, listeye ekle ve veritabanında güvende tut.
+                # Bu SKU'yu ilk defa görüyoruz, listeye ekle ve koruma altına al.
                 islenen_skular.add(varyant.sku)
                 
     # Silme işlemlerini veritabanına kalıcı olarak kaydet
@@ -1429,6 +1432,6 @@ def kopyalari_temizle(db: Session = Depends(get_db)):
     
     return {
         "durum": "TEMİZLİK BAŞARILI",
-        "mesaj": f"Operasyon tamamlandı! Toplam {silinen_kayit_sayisi} adet mükerrer kopya veritabanından kalıcı olarak silindi.",
+        "mesaj": f"Operasyon tamamlandı! Toplam {silinen_kayit_sayisi} adet mükerrer kopya ve bunlara bağlı alt kayıtlar veritabanından kalıcı olarak silindi.",
         "kalan_saglam_urun_sayisi": len(islenen_skular)
     }
