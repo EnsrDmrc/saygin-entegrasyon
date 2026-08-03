@@ -1404,3 +1404,31 @@ def kopya_kontrol(db: Session = Depends(get_db)):
         "mesaj": f"Sistemde {len(kopya_listesi)} adet ürünün birden fazla kaydı tespit edildi!",
         "kopya_detaylari": kopya_listesi
     }
+
+
+@app.get("/kopyalari-temizle")
+def kopyalari_temizle(db: Session = Depends(get_db)):
+    """Veritabanındaki mükerrer varyantları temizler, her stok kodundan sadece 1 tane bırakır."""
+    varyantlar = db.query(models.Variant).all()
+    
+    silinen_kayit_sayisi = 0
+    islenen_skular = set()
+    
+    for varyant in varyantlar:
+        if varyant.sku:
+            if varyant.sku in islenen_skular:
+                # Bu SKU'yu daha önce listeye ekledik, demek ki bu satır bir kopya. Hemen sil!
+                db.delete(varyant)
+                silinen_kayit_sayisi += 1
+            else:
+                # Bu SKU'yu ilk defa görüyoruz, listeye ekle ve veritabanında güvende tut.
+                islenen_skular.add(varyant.sku)
+                
+    # Silme işlemlerini veritabanına kalıcı olarak kaydet
+    db.commit()
+    
+    return {
+        "durum": "TEMİZLİK BAŞARILI",
+        "mesaj": f"Operasyon tamamlandı! Toplam {silinen_kayit_sayisi} adet mükerrer kopya veritabanından kalıcı olarak silindi.",
+        "kalan_saglam_urun_sayisi": len(islenen_skular)
+    }
