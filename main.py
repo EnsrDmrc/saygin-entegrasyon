@@ -1159,94 +1159,103 @@ def n11_siparisleri_cek(db: Session = Depends(get_db)):
                 if not siparisler:
                     return {"sistem_mesaji": "Devriye tamamlandi. Su an merkez stogu etkileyecek yeni bir N11 siparisi yok."}
                 
-                # --- ANA STOK DÜŞÜM MOTORU ---
+                # --- ANA STOK DÜŞÜM MOTORU (GÜNCELLENDİ) ---
                 islem_raporu = []
                 
                 for siparis in siparisler:
-                    # 1. SİPARİŞ NUMARASINI ÇEK (Yeni Eklenen Kısım)
-                    order_number_tag = siparis.find('.//orderNumber')
-                    if order_number_tag is None:
-                        order_number_tag = siparis.find('.//ns3:orderNumber', ns)
-                    order_number = order_number_tag.text.strip() if order_number_tag is not None else "Bilinmiyor"
-                    
-                    # 2. MÜKERRER SİPARİŞ KONTROLÜ - GÜVENLİK KİLİDİ (Yeni Eklenen Kısım)
-                    mevcut_siparis = db.query(models.Order).filter(models.Order.order_number == order_number).first()
-                    if mevcut_siparis:
-                        islem_raporu.append(f"ATLANDI: {order_number} numaralı sipariş daha önce işlenmiş.")
-                        continue # Bu siparişi atla, sıradaki siparişe geç
+                    try:
+                        # 1. SİPARİŞ NUMARASINI ÇEK
+                        order_number_tag = siparis.find('.//orderNumber')
+                        if order_number_tag is None:
+                            order_number_tag = siparis.find('.//ns3:orderNumber', ns)
+                        order_number = order_number_tag.text.strip() if order_number_tag is not None else "Bilinmiyor"
                         
-                    stok_dusumu_yapildi_mi = False
-                    
-                    kalemler = siparis.findall('.//orderItemList/orderItem')
-                    if not kalemler:
-                        kalemler = siparis.findall('.//ns3:orderItem', ns)
+                        # 2. MÜKERRER SİPARİŞ KONTROLÜ
+                        mevcut_siparis = db.query(models.Order).filter(models.Order.order_number == order_number).first()
+                        if mevcut_siparis:
+                            islem_raporu.append(f"ATLANDI: {order_number} numaralı sipariş daha önce işlenmiş.")
+                            continue
+                            
+                        stok_dusumu_yapildi_mi = False
                         
-                    for kalem in kalemler:
-                        sku_tag = kalem.find('.//productSellerCode')
-                        if sku_tag is None:
-                            sku_tag = kalem.find('.//ns3:productSellerCode', ns)
+                        kalemler = siparis.findall('.//orderItemList/orderItem')
+                        if not kalemler:
+                            kalemler = siparis.findall('.//ns3:orderItem', ns)
                             
-                        adet_tag = kalem.find('.//quantity')
-                        if adet_tag is None:
-                            adet_tag = kalem.find('.//ns3:quantity', ns)
-                            
-                        if sku_tag is not None and adet_tag is not None:
-                            stok_kodu = sku_tag.text.strip()
-                            satilan_adet = int(adet_tag.text)
-                            
-                            varyant = db.query(models.Variant).filter(models.Variant.sku == stok_kodu).first()
-                            
-                            if varyant:
-                                # Merkez Veritabanını Güncelle
-                                eski_stok = varyant.stock_quantity
-                                yeni_stok = eski_stok - satilan_adet
-                                varyant.stock_quantity = yeni_stok
-                                db.commit() 
-                                islem_raporu.append(f"MERKEZ BAŞARILI: {stok_kodu} yerel stok güncellendi ({eski_stok} -> {yeni_stok})")
-                                stok_dusumu_yapildi_mi = True
+                        for kalem in kalemler:
+                            sku_tag = kalem.find('.//productSellerCode')
+                            if sku_tag is None:
+                                sku_tag = kalem.find('.//ns3:productSellerCode', ns)
                                 
-                                # SHOPIFY'A OTOMATİK BİLDİRİM GÖNDER
-                                listing = db.query(models.ChannelListing).filter(
-                                    models.ChannelListing.variant_id == varyant.id,
-                                    models.ChannelListing.channel_id == 4 
-                                ).first()
+                            adet_tag = kalem.find('.//quantity')
+                            if adet_tag is None:
+                                adet_tag = kalem.find('.//ns3:quantity', ns)
                                 
-                                if listing:
-                                    SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
-                                    SHOPIFY_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
-                                    inventory_item_id = listing.channel_product_id
+                            if sku_tag is not None and adet_tag is not None:
+                                stok_kodu = sku_tag.text.strip()
+                                satilan_adet = int(adet_tag.text)
+                                
+                                varyant = db.query(models.Variant).filter(models.Variant.sku == stok_kodu).first()
+                                
+                                if varyant:
+                                    # MERKEZ VERİTABANINI GÜNCELLE (SADECE HAFIZADA, HENÜZ KAYIT YOK)
+                                    eski_stok = varyant.stock_quantity
+                                    yeni_stok = eski_stok - satilan_adet
+                                    varyant.stock_quantity = yeni_stok
                                     
-                                    loc_res = requests.get(f"https://{SHOPIFY_URL}/admin/api/2026-07/locations.json", headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN})
-                                    if loc_res.status_code == 200:
-                                        loc_id = loc_res.json()["locations"][0]["id"]
+                                    # DİKKAT: db.commit() BURADAN KALDIRILDI!
+                                    
+                                    islem_raporu.append(f"HAFIZA GÜNCELLENDİ: {stok_kodu} yerel stok ({eski_stok} -> {yeni_stok})")
+                                    stok_dusumu_yapildi_mi = True
+                                    
+                                    # SHOPIFY'A OTOMATİK BİLDİRİM GÖNDER
+                                    listing = db.query(models.ChannelListing).filter(
+                                        models.ChannelListing.variant_id == varyant.id,
+                                        models.ChannelListing.channel_id == 4 
+                                    ).first()
+                                    
+                                    if listing:
+                                        SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+                                        SHOPIFY_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
+                                        inventory_item_id = listing.channel_product_id
                                         
-                                        inv_url = f"https://{SHOPIFY_URL}/admin/api/2026-07/inventory_levels/set.json"
-                                        inv_res = requests.post(inv_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json={
-                                            "location_id": loc_id,
-                                            "inventory_item_id": inventory_item_id,
-                                            "available": yeni_stok
-                                        })
-                                        
-                                        if inv_res.status_code == 200:
-                                            islem_raporu.append(f"SHOPIFY BAŞARILI: {stok_kodu} vitrin stoğu {yeni_stok} adet olarak eşitlendi.")
-                                        else:
-                                            islem_raporu.append(f"SHOPIFY HATASI: Stok güncellenemedi. Hata: {inv_res.text}")
-                            else:
-                                islem_raporu.append(f"HATA: {stok_kodu} kodlu urun yerel veritabaninda bulunamadi.")
-                                
-                    # 3. İŞLEM BİTİNCE SİPARİŞİ HAFIZAYA KAYDET (Yeni Eklenen Kısım)
-                    if stok_dusumu_yapildi_mi or order_number != "Bilinmiyor":
-                        yeni_siparis = models.Order(
-                            merchant_id=1,
-                            channel_id=3, # 3 numara N11 Kanalı
-                            order_number=order_number,
-                            total_amount=0.0,
-                            status="approved"
-                        )
-                        db.add(yeni_siparis)
-                        db.commit()
-                        islem_raporu.append(f"KAYIT BAŞARILI: {order_number} numaralı sipariş hafızaya işlendi.")
-                                
+                                        loc_res = requests.get(f"https://{SHOPIFY_URL}/admin/api/2026-07/locations.json", headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN})
+                                        if loc_res.status_code == 200:
+                                            loc_id = loc_res.json()["locations"][0]["id"]
+                                            inv_url = f"https://{SHOPIFY_URL}/admin/api/2026-07/inventory_levels/set.json"
+                                            inv_res = requests.post(inv_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json={
+                                                "location_id": loc_id,
+                                                "inventory_item_id": inventory_item_id,
+                                                "available": yeni_stok
+                                            })
+                                            
+                                            if inv_res.status_code == 200:
+                                                islem_raporu.append(f"SHOPIFY BAŞARILI: {stok_kodu} vitrin stoğu {yeni_stok} adet olarak eşitlendi.")
+                                            else:
+                                                islem_raporu.append(f"SHOPIFY HATASI: Stok güncellenemedi. Hata: {inv_res.text}")
+                                else:
+                                    islem_raporu.append(f"HATA: {stok_kodu} kodlu urun yerel veritabaninda bulunamadi.")
+                                    
+                        # 3. İŞLEM BİTİNCE SİPARİŞİ HAFIZAYA KAYDET VE ATOMİK OLARAK COMMIT ET
+                        if stok_dusumu_yapildi_mi or order_number != "Bilinmiyor":
+                            yeni_siparis = models.Order(
+                                merchant_id=1,
+                                channel_id=3, 
+                                order_number=order_number,
+                                total_amount=0.0,
+                                status="approved"
+                            )
+                            db.add(yeni_siparis)
+                            
+                            # HER ŞEY KUSURSUZ ÇALIŞTIYSA STOĞU VE SİPARİŞİ TEK SEFERDE YAZ
+                            db.commit()
+                            islem_raporu.append(f"KAYIT BAŞARILI: {order_number} numaralı sipariş hafızaya işlendi.")
+                            
+                    except Exception as siparis_hatasi:
+                        # EĞER KAYIT ESNASINDA ÇÖKME OLURSA, YAPILAN TÜM STOK DÜŞÜMLERİNİ GERİ AL (ROLLBACK)
+                        db.rollback()
+                        islem_raporu.append(f"KRİTİK HATA ({order_number}): İşlem iptal edildi ve stok düşümü geri alındı. Hata: {str(siparis_hatasi)}")
+                        
                 return {
                     "sistem_mesaji": "Siparis devriyesi tamamlandi ve veritabani senkronize edildi.",
                     "detaylar": islem_raporu
@@ -1262,7 +1271,6 @@ def n11_siparisleri_cek(db: Session = Depends(get_db)):
             
     except Exception as e:
         return {"hata": f"Bir seyler ters gitti: {str(e)}"}
-
 
 # --- 1. PARÇA: ARKA PLAN MOTORU ---
 def arka_planda_stok_esitle():
