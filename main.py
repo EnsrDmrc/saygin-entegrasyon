@@ -1492,3 +1492,57 @@ def sku_normalize_birlestir(db: Session = Depends(get_db)):
         "mesaj": f"Tüm stok kodları temizlendi ve büyük harfe çevrildi. Toplam {birlestirilen_kayit_sayisi} adet gizli kopya birleştirildi.",
         "guncel_gercek_urun_sayisi": kalan_essiz_sku_sayisi
     }
+
+
+
+@app.get("/veritabani-tablosu", response_class=HTMLResponse)
+def veritabani_tablosu(db: Session = Depends(get_db)):
+    """Veritabanındaki tüm varyantları ekranda tablo olarak listeler."""
+    # Ürünleri SKU'ya (Stok Koduna) göre A'dan Z'ye sıralayarak çekiyoruz ki benzerleri alt alta görebilesin
+    varyantlar = db.query(models.Variant).order_by(models.Variant.sku).all()
+    
+    html_content = """
+    <html>
+        <head>
+            <title>Saygın Grup Hırdavat - Veritabanı Gözlem</title>
+            <style>
+                body { font-family: Arial, sans-serif; padding: 20px; }
+                table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+                th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+                th { background-color: #2c3e50; color: white; position: sticky; top: 0; }
+                tr:nth-child(even) { background-color: #f9f9f9; }
+                tr:hover { background-color: #f1f1f1; }
+            </style>
+        </head>
+        <body>
+            <h2>Veritabanındaki Tüm Stok Kartları (Toplam: """ + str(len(varyantlar)) + """)</h2>
+            <p>Ürünler stok koduna göre A'dan Z'ye sıralanmıştır. Aynı veya benzer ürünlerin kodlarını buradan gözlemleyebilirsin.</p>
+            <table>
+                <tr>
+                    <th>Veritabanı ID</th>
+                    <th>Stok Kodu (SKU)</th>
+                    <th>Bağlı Ürün (Product ID)</th>
+                    <th>Güncel Merkez Stok</th>
+                </tr>
+    """
+    
+    for v in varyantlar:
+        # Eğer stok kodu tamamen boşsa (None) ekranda 'KOD YOK' yazsın
+        gosterilecek_sku = v.sku if v.sku else "<strong style='color:red;'>KOD YOK</strong>"
+        
+        html_content += f"""
+                <tr>
+                    <td>{v.id}</td>
+                    <td>{gosterilecek_sku}</td>
+                    <td>{v.product_id}</td>
+                    <td>{int(v.stock_quantity)}</td>
+                </tr>
+        """
+        
+    html_content += """
+            </table>
+        </body>
+    </html>
+    """
+    
+    return HTMLResponse(content=html_content, status_code=200)
