@@ -1161,12 +1161,25 @@ def n11_siparisleri_cek(db: Session = Depends(get_db)):
                 islem_raporu = []
                 
                 for siparis in siparisler:
+                    # 1. SİPARİŞ NUMARASINI ÇEK (Yeni Eklenen Kısım)
+                    order_number_tag = siparis.find('.//orderNumber')
+                    if order_number_tag is None:
+                        order_number_tag = siparis.find('.//ns3:orderNumber', ns)
+                    order_number = order_number_tag.text.strip() if order_number_tag is not None else "Bilinmiyor"
+                    
+                    # 2. MÜKERRER SİPARİŞ KONTROLÜ - GÜVENLİK KİLİDİ (Yeni Eklenen Kısım)
+                    mevcut_siparis = db.query(models.Order).filter(models.Order.order_number == order_number).first()
+                    if mevcut_siparis:
+                        islem_raporu.append(f"ATLANDI: {order_number} numaralı sipariş daha önce işlenmiş.")
+                        continue # Bu siparişi atla, sıradaki siparişe geç
+                        
+                    stok_dusumu_yapildi_mi = False
+                    
                     kalemler = siparis.findall('.//orderItemList/orderItem')
                     if not kalemler:
                         kalemler = siparis.findall('.//ns3:orderItem', ns)
                         
                     for kalem in kalemler:
-                        # Görselden bulduğumuz gerçek etiketleri (productSellerCode ve quantity) çekiyoruz
                         sku_tag = kalem.find('.//productSellerCode')
                         if sku_tag is None:
                             sku_tag = kalem.find('.//ns3:productSellerCode', ns)
@@ -1179,22 +1192,21 @@ def n11_siparisleri_cek(db: Session = Depends(get_db)):
                             stok_kodu = sku_tag.text.strip()
                             satilan_adet = int(adet_tag.text)
                             
-                            # Merkez Veritabanında (SQL) bu ürünü buluyoruz
                             varyant = db.query(models.Variant).filter(models.Variant.sku == stok_kodu).first()
                             
-                            # --- DEĞİŞEN VE EKLENEN KISIM BURADAN BAŞLIYOR ---
                             if varyant:
-                                # 1. Merkez Veritabanını Güncelle
+                                # Merkez Veritabanını Güncelle
                                 eski_stok = varyant.stock_quantity
                                 yeni_stok = eski_stok - satilan_adet
                                 varyant.stock_quantity = yeni_stok
                                 db.commit() 
                                 islem_raporu.append(f"MERKEZ BAŞARILI: {stok_kodu} yerel stok güncellendi ({eski_stok} -> {yeni_stok})")
+                                stok_dusumu_yapildi_mi = True
                                 
-                                # 2. SHOPIFY'A OTOMATİK BİLDİRİM GÖNDER
+                                # SHOPIFY'A OTOMATİK BİLDİRİM GÖNDER
                                 listing = db.query(models.ChannelListing).filter(
                                     models.ChannelListing.variant_id == varyant.id,
-                                    models.ChannelListing.channel_id == 4 # 4 numara Shopify kanalı
+                                    models.ChannelListing.channel_id == 4 
                                 ).first()
                                 
                                 if listing:
@@ -1202,12 +1214,10 @@ def n11_siparisleri_cek(db: Session = Depends(get_db)):
                                     SHOPIFY_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
                                     inventory_item_id = listing.channel_product_id
                                     
-                                    # Önce Shopify'daki lokasyon ID'ni alıyoruz
                                     loc_res = requests.get(f"https://{SHOPIFY_URL}/admin/api/2026-07/locations.json", headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN})
                                     if loc_res.status_code == 200:
                                         loc_id = loc_res.json()["locations"][0]["id"]
                                         
-                                        # Stoğu Shopify'a gönder
                                         inv_url = f"https://{SHOPIFY_URL}/admin/api/2026-07/inventory_levels/set.json"
                                         inv_res = requests.post(inv_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json={
                                             "location_id": loc_id,
@@ -1221,7 +1231,19 @@ def n11_siparisleri_cek(db: Session = Depends(get_db)):
                                             islem_raporu.append(f"SHOPIFY HATASI: Stok güncellenemedi. Hata: {inv_res.text}")
                             else:
                                 islem_raporu.append(f"HATA: {stok_kodu} kodlu urun yerel veritabaninda bulunamadi.")
-                            # --- DEĞİŞEN KISIM BURADA BİTİYOR ---
+                                
+                    # 3. İŞLEM BİTİNCE SİPARİŞİ HAFIZAYA KAYDET (Yeni Eklenen Kısım)
+                    if stok_dusumu_yapildi_mi or order_number != "Bilinmiyor":
+                        yeni_siparis = models.Order(
+                            merchant_id=1,
+                            channel_id=3, # 3 numara N11 Kanalı
+                            order_number=order_number,
+                            total_amount=0.0,
+                            status="approved"
+                        )
+                        db.add(yeni_siparis)
+                        db.commit()
+                        islem_raporu.append(f"KAYIT BAŞARILI: {order_number} numaralı sipariş hafızaya işlendi.")
                                 
                 return {
                     "sistem_mesaji": "Siparis devriyesi tamamlandi ve veritabani senkronize edildi.",
