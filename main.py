@@ -1781,3 +1781,57 @@ def n11_stok_guncelle_test(sku: str, miktar: int):
             
     except Exception as e:
         return {"durum": "KRİTİK HATA", "mesaj": str(e)}
+
+
+@app.get("/cift-kayitlari-temizle")
+def cift_kayitlari_temizle(db: Session = Depends(get_db)):
+    """Veritabanındaki mükerrer (çift) kayıtları bulur, asıl olanı tutar ve kopyaları siler."""
+    try:
+        rapor = []
+        silinen_kopya_sayisi = 0
+        
+        # Tüm ürünleri çekiyoruz
+        tum_urunler = db.query(models.Product).all()
+        
+        # Ürünleri isimlerine göre gruplayalım
+        baslik_sozlugu = {}
+        for urun in tum_urunler:
+            if urun.title:
+                temiz_baslik = urun.title.strip().upper()
+                if temiz_baslik in baslik_sozlugu:
+                    baslik_sozlugu[temiz_baslik].append(urun)
+                else:
+                    baslik_sozlugu[temiz_baslik] = [urun]
+        
+        # Çift olanları tespit edip silelim
+        for baslik, urun_listesi in baslik_sozlugu.items():
+            if len(urun_listesi) > 1:
+                # ID'ye göre sırala (en eski olan asıldır, onu tutacağız)
+                urun_listesi.sort(key=lambda x: x.id)
+                asil_urun = urun_listesi[0]
+                kopyalar = urun_listesi[1:]
+                
+                for kopya in kopyalar:
+                    # Kopyaya bağlı varyantları bul
+                    varyantlar = db.query(models.Variant).filter(models.Variant.product_id == kopya.id).all()
+                    for v in varyantlar:
+                        # Önce kanal listelemelerini sil (Foreign Key hatası almamak için)
+                        db.query(models.ChannelListing).filter(models.ChannelListing.variant_id == v.id).delete(synchronize_session=False)
+                        # Sonra varyantı sil
+                        db.delete(v)
+                    
+                    # En son ana klon ürünü sil
+                    db.delete(kopya)
+                    silinen_kopya_sayisi += 1
+                    
+                rapor.append(f"Asıl ID: {asil_urun.id} korundu. '{baslik}' için klonlar silindi.")
+        
+        db.commit()
+        return {
+            "durum": "VERİTABANI TEMİZLİĞİ BAŞARILI",
+            "silinen_toplam_kopya_urun": silinen_kopya_sayisi,
+            "detaylar": rapor
+        }
+    except Exception as e:
+        db.rollback()
+        return {"durum": "KRİTİK HATA", "mesaj": str(e)}
