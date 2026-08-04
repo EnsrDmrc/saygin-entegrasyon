@@ -683,7 +683,7 @@ def sync_shopify_akilli(db: Session = Depends(get_db)):
 
     yeni_urun_sayisi = 0
     yeni_varyant_sayisi = 0
-    es gecilen_varyant_sayisi = 0
+    es_gecilen_varyant_sayisi = 0
 
     while url:
         response = requests.get(url, headers=headers)
