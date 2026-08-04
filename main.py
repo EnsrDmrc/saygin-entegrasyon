@@ -1588,7 +1588,7 @@ def kanallari_kur(db: Session = Depends(get_db)):
     # 3 Numaralı Kanal: N11
     n11 = db.query(models.Channel).filter(models.Channel.id == 3).first()
     if not n11:
-        yeni_n11 = models.Channel(id=3, name="N11", is_active=True)
+        yeni_n11 = models.Channel(id=3, merchant_id=1, name="N11", is_active=True)
         db.add(yeni_n11)
         rapor.append("N11 Kanalı (ID: 3) veritabanına başarıyla eklendi.")
     else:
@@ -1597,7 +1597,7 @@ def kanallari_kur(db: Session = Depends(get_db)):
     # 4 Numaralı Kanal: Shopify (Her ihtimale karşı bunu da ekleyelim)
     shopify = db.query(models.Channel).filter(models.Channel.id == 4).first()
     if not shopify:
-        yeni_shopify = models.Channel(id=4, name="Shopify", is_active=True)
+        yeni_shopify = models.Channel(id=4, merchant_id=1, name="Shopify", is_active=True)
         db.add(yeni_shopify)
         rapor.append("Shopify Kanalı (ID: 4) veritabanına başarıyla eklendi.")
     else:
