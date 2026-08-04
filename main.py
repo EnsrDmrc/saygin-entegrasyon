@@ -1579,3 +1579,29 @@ def stok_onar(stok_kodu: str, gercek_stok: int, db: Session = Depends(get_db)):
         "degisim_raporu": f"Eski Stok: {int(eski_hatali_stok)} -> Yeni Gerçek Stok: {gercek_stok}",
         "sonraki_adim": "Vitrinleri (Shopify ve N11) bu yeni rakamla eşitlemek için lütfen /genel-stok-esitle motorunu çalıştır."
     }
+
+@app.get("/kanallari-kur")
+def kanallari_kur(db: Session = Depends(get_db)):
+    """Veritabanında eksik olan pazaryeri kanallarını oluşturur."""
+    rapor = []
+    
+    # 3 Numaralı Kanal: N11
+    n11 = db.query(models.Channel).filter(models.Channel.id == 3).first()
+    if not n11:
+        yeni_n11 = models.Channel(id=3, name="N11", is_active=True)
+        db.add(yeni_n11)
+        rapor.append("N11 Kanalı (ID: 3) veritabanına başarıyla eklendi.")
+    else:
+        rapor.append("N11 Kanalı zaten mevcut.")
+        
+    # 4 Numaralı Kanal: Shopify (Her ihtimale karşı bunu da ekleyelim)
+    shopify = db.query(models.Channel).filter(models.Channel.id == 4).first()
+    if not shopify:
+        yeni_shopify = models.Channel(id=4, name="Shopify", is_active=True)
+        db.add(yeni_shopify)
+        rapor.append("Shopify Kanalı (ID: 4) veritabanına başarıyla eklendi.")
+    else:
+        rapor.append("Shopify Kanalı zaten mevcut.")
+        
+    db.commit()
+    return {"durum": "ONARIM TAMAMLANDI", "detaylar": rapor}
