@@ -1687,7 +1687,7 @@ def eksik_urunu_ekle(sku: str, db: Session = Depends(get_db)):
             return {"hata": f"Shopify'da {hedef_sku} kodlu ürün bulunamadı. Lütfen Shopify panelinde kodun doğru yazıldığından emin ol."}
 
         # 3. Veritabanına İnşa Et
-        # Ana Ürün (Product) - 'is_active' kaldırıldı.
+        # Ana Ürün (Product)
         yeni_urun = models.Product(
             merchant_id=1,
             title=bulunan_urun.get("title")
@@ -1695,12 +1695,11 @@ def eksik_urunu_ekle(sku: str, db: Session = Depends(get_db)):
         db.add(yeni_urun)
         db.flush() # ID'yi anında almak için flush yapıyoruz
         
-        # Varyant (Variant)
+        # Varyant (Variant) - 'price' kaldırıldı, sadece stok ve SKU var.
         baslangic_stogu = bulunan_varyant.get("inventory_quantity", 0)
         yeni_varyant = models.Variant(
             product_id=yeni_urun.id,
             sku=hedef_sku,
-            price=float(bulunan_varyant.get("price", 0.0)),
             stock_quantity=baslangic_stogu
         )
         db.add(yeni_varyant)
