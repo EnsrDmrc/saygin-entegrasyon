@@ -1648,3 +1648,84 @@ def sku_kontrol_raporu(db: Session = Depends(get_db)):
         }
     except Exception as e:
         return {"durum": "KRİTİK HATA", "mesaj": str(e)}
+
+
+
+@app.get("/eksik-urunu-ekle/{sku}")
+def eksik_urunu_ekle(sku: str, db: Session = Depends(get_db)):
+    """Shopify'dan belirli bir SKU'yu bulup yerel veritabanına ana ürün, varyant ve kanal bağlantısı olarak ekler."""
+    try:
+        hedef_sku = sku.strip().upper()
+        
+        # 1. Zaten var mı kontrolü
+        mevcut = db.query(models.Variant).filter(models.Variant.sku == hedef_sku).first()
+        if mevcut:
+            return {"mesaj": f"{hedef_sku} kodu zaten veritabanında kayıtlı."}
+
+        # 2. Shopify'dan ürünü bul
+        SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+        SHOPIFY_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
+        headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN}
+        
+        res = requests.get(f"https://{SHOPIFY_URL}/admin/api/2026-07/products.json?limit=250", headers=headers)
+        if res.status_code != 200:
+            return {"hata": "Shopify API bağlantı sorunu."}
+            
+        bulunan_varyant = None
+        bulunan_urun = None
+        
+        for urun in res.json().get("products", []):
+            for varyant in urun.get("variants", []):
+                if varyant.get("sku") and varyant.get("sku").strip().upper() == hedef_sku:
+                    bulunan_varyant = varyant
+                    bulunan_urun = urun
+                    break
+            if bulunan_varyant:
+                break
+                
+        if not bulunan_varyant:
+            return {"hata": f"Shopify'da {hedef_sku} kodlu ürün bulunamadı. Lütfen Shopify panelinde kodun doğru yazıldığından emin ol."}
+
+        # 3. Veritabanına İnşa Et
+        # Ana Ürün (Product)
+        yeni_urun = models.Product(
+            merchant_id=1,
+            name=bulunan_urun.get("title"),
+            is_active=True
+        )
+        db.add(yeni_urun)
+        db.flush() # ID'yi anında almak için flush yapıyoruz
+        
+        # Varyant (Variant)
+        baslangic_stogu = bulunan_varyant.get("inventory_quantity", 0)
+        yeni_varyant = models.Variant(
+            product_id=yeni_urun.id,
+            sku=hedef_sku,
+            price=float(bulunan_varyant.get("price", 0.0)),
+            stock_quantity=baslangic_stogu
+        )
+        db.add(yeni_varyant)
+        db.flush()
+        
+        # Shopify Köprüsü (ChannelListing) -> inventory_item_id'yi kaydediyoruz ki sonradan stok düşebilelim
+        yeni_listing = models.ChannelListing(
+            variant_id=yeni_varyant.id,
+            channel_id=4, 
+            channel_product_id=str(bulunan_varyant.get("inventory_item_id"))
+        )
+        db.add(yeni_listing)
+        
+        db.commit()
+        return {
+            "durum": "BAŞARILI",
+            "mesaj": f"Ürün veritabanına mükemmel şekilde entegre edildi.",
+            "kaydedilen_bilgiler": {
+                "urun_adi": bulunan_urun.get("title"),
+                "sku": hedef_sku,
+                "alinan_stok": baslangic_stogu
+            }
+        }
+        
+    except Exception as e:
+        db.rollback()
+        return {"durum": "HATA", "mesaj": str(e)}
