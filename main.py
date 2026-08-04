@@ -1605,3 +1605,46 @@ def kanallari_kur(db: Session = Depends(get_db)):
         
     db.commit()
     return {"durum": "ONARIM TAMAMLANDI", "detaylar": rapor}
+
+
+
+@app.get("/sku-kontrol-raporu")
+def sku_kontrol_raporu(db: Session = Depends(get_db)):
+    """Shopify ve Yerel Veritabanı arasındaki stok kodu (SKU) uyuşmazlıklarını tespit eder."""
+    try:
+        # 1. Yerel Veritabanındaki SKU'ları Çek
+        yerel_varyantlar = db.query(models.Variant.sku).all()
+        yerel_skular = set([v[0].strip().upper() for v in yerel_varyantlar if v[0]])
+        
+        # 2. Shopify'daki SKU'ları Çek
+        SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+        SHOPIFY_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
+        
+        headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN}
+        url = f"https://{SHOPIFY_URL}/admin/api/2026-07/products.json?limit=250"
+        
+        res = requests.get(url, headers=headers)
+        if res.status_code != 200:
+            return {"durum": "HATA", "mesaj": f"Shopify API'ye bağlanılamadı. Kod: {res.status_code}"}
+            
+        shopify_skular = set()
+        for urun in res.json().get("products", []):
+            for varyant in urun.get("variants", []):
+                if varyant.get("sku"):
+                    shopify_skular.add(varyant.get("sku").strip().upper())
+                    
+        # 3. Kesişim ve Farkları Hesapla
+        sadece_shopifyda_olanlar = list(shopify_skular - yerel_skular)
+        ortak_skular = list(yerel_skular & shopify_skular)
+        
+        return {
+            "durum": "ANALİZ TAMAMLANDI",
+            "ozet": {
+                "sorunsuz_eslesen_urun_sayisi": len(ortak_skular),
+                "hatali_veya_farkli_shopify_kodlari": len(sadece_shopifyda_olanlar)
+            },
+            "acil_mudahale_gereken_kodlar": sadece_shopifyda_olanlar,
+            "sistem_mesaji": "Eğer 'acil_mudahale_gereken_kodlar' listesi boşsa, sistem %100 uyumludur. Liste doluysa, bu kodların sonundaki ekleri silerek Shopify panelinden düzeltmeniz gerekir."
+        }
+    except Exception as e:
+        return {"durum": "KRİTİK HATA", "mesaj": str(e)}
