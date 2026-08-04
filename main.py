@@ -1687,11 +1687,10 @@ def eksik_urunu_ekle(sku: str, db: Session = Depends(get_db)):
             return {"hata": f"Shopify'da {hedef_sku} kodlu ürün bulunamadı. Lütfen Shopify panelinde kodun doğru yazıldığından emin ol."}
 
         # 3. Veritabanına İnşa Et
-        # Ana Ürün (Product) - 'name' yerine 'title' kullanıldı.
+        # Ana Ürün (Product) - 'is_active' kaldırıldı.
         yeni_urun = models.Product(
             merchant_id=1,
-            title=bulunan_urun.get("title"),
-            is_active=True
+            title=bulunan_urun.get("title")
         )
         db.add(yeni_urun)
         db.flush() # ID'yi anında almak için flush yapıyoruz
