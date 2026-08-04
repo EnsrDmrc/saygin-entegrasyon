@@ -1695,12 +1695,13 @@ def eksik_urunu_ekle(sku: str, db: Session = Depends(get_db)):
         db.add(yeni_urun)
         db.flush() # ID'yi anında almak için flush yapıyoruz
         
-        # Varyant (Variant) - 'price' kaldırıldı, sadece stok ve SKU var.
+        # Varyant (Variant) - 'base_price' olarak doğru isimle güncellendi.
         baslangic_stogu = bulunan_varyant.get("inventory_quantity", 0)
         yeni_varyant = models.Variant(
             product_id=yeni_urun.id,
             sku=hedef_sku,
-            stock_quantity=baslangic_stogu
+            stock_quantity=baslangic_stogu,
+            base_price=float(bulunan_varyant.get("price", 0.0))
         )
         db.add(yeni_varyant)
         db.flush()
@@ -1720,7 +1721,8 @@ def eksik_urunu_ekle(sku: str, db: Session = Depends(get_db)):
             "kaydedilen_bilgiler": {
                 "urun_adi": bulunan_urun.get("title"),
                 "sku": hedef_sku,
-                "alinan_stok": baslangic_stogu
+                "alinan_stok": baslangic_stogu,
+                "kaydedilen_fiyat": float(bulunan_varyant.get("price", 0.0))
             }
         }
         
