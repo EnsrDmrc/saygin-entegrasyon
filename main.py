@@ -1729,3 +1729,55 @@ def eksik_urunu_ekle(sku: str, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         return {"durum": "HATA", "mesaj": str(e)}
+
+
+@app.get("/n11-stok-guncelle-test/{sku}")
+def n11_stok_guncelle_test(sku: str, miktar: int):
+    """N11 REST API kullanarak belirtilen ürünün stoğunu N11 panelinde anında günceller."""
+    
+    # 1. Sisteme kaydettiğin N11 Anahtarlarını çağır
+    n11_key = os.getenv("N11_APP_KEY")
+    n11_secret = os.getenv("N11_APP_SECRET")
+    
+    if not n11_key or not n11_secret:
+        return {"durum": "HATA", "mesaj": "Render ortam değişkenlerinde N11_APP_KEY veya N11_APP_SECRET eksik."}
+        
+    # 2. N11'in Yeni REST API Bağlantı Noktası
+    url = "https://api.n11.com/ms/product/tasks/price-stock-update"
+    
+    # 3. N11'e Kimliğimizi Kanıtlıyoruz (Şifreli Kapı)
+    headers = {
+        "appkey": n11_key,
+        "appsecret": n11_secret,
+        "Content-Type": "application/json"
+    }
+    
+    # 4. N11'in Anlayacağı Dilde Stok Paketi Hazırlıyoruz
+    payload = {
+        "payload": {
+            "integrator": "SayginGrupEntegrasyon", 
+            "skus": [
+                {
+                    "stockCode": sku.strip().upper(),
+                    "quantity": miktar
+                }
+            ]
+        }
+    }
+    
+    # 5. Paketi Gönder ve Sonucu Oku
+    try:
+        res = requests.post(url, json=payload, headers=headers)
+        
+        if res.status_code == 200:
+            return {
+                "durum": "N11 KAPIYI AÇTI VE STOK GÜNCELLENDİ", 
+                "guncellenen_urun": sku, 
+                "n11_yeni_stok": miktar,
+                "n11_merkez_cevabi": res.json()
+            }
+        else:
+            return {"durum": "API HATASI", "hata_kodu": res.status_code, "mesaj": res.text}
+            
+    except Exception as e:
+        return {"durum": "KRİTİK HATA", "mesaj": str(e)}
