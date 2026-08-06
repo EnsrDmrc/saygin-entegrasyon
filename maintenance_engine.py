@@ -616,17 +616,21 @@ def arka_planda_fiyat_kurtar():
                 shopify_variant_id = listing.channel_product_id
                 shopify_url = f"https://{SHOPIFY_URL}/admin/api/2026-07/variants/{shopify_variant_id}.json"
                 
+                # Fiyatı metin (string) formatına çeviriyoruz
                 shopify_payload = {
                     "variant": {
                         "id": shopify_variant_id,
-                        "price": gercek_fiyat
+                        "price": str(gercek_fiyat) 
                     }
                 }
-                requests.put(shopify_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json=shopify_payload)
                 
-                print(f"[ONARILDI] SKU: {sku} | Gerçek Satış Fiyatı: {gercek_fiyat} TL Shopify'a işlendi.")
-            else:
-                print(f"[ATLANDI] SKU: {sku} N11 sunucularında bulunamadı veya fiyat okunamadı.")
+                shopify_res = requests.put(shopify_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json=shopify_payload)
+                
+                # Shopify'ın paketimizi kabul edip etmediğini kontrol ediyoruz
+                if shopify_res.status_code == 200:
+                    print(f"[ONARILDI] SKU: {sku} | Gerçek Satış Fiyatı: {gercek_fiyat} TL Shopify'a işlendi.")
+                else:
+                    print(f"[SHOPIFY HATASI] SKU: {sku} güncellenemedi! Hata Kodu: {shopify_res.status_code} | Sebep: {shopify_res.text}")
                 
             time.sleep(0.3) 
             
