@@ -660,7 +660,7 @@ def arka_planda_fiyat_kurtar():
                         print(f"[SHOPIFY HATASI] SKU: {sku} güncellenemedi! Hata Kodu: {shopify_res.status_code} | Sebep: {shopify_res.text}")
                 else:
                     print(f"[ATLANDI] SKU: {sku} Shopify'da bulunamadı! (Bu SKU ile açılmış bir ürün yok)")
-                    
+
             time.sleep(0.3) 
             
         print("--- 🛠️ FİYAT KURTARMA OPERASYONU BAŞARIYLA TAMAMLANDI ---\n")
@@ -678,3 +678,72 @@ def fiyatlari_kurtar_tetikle(background_tasks: BackgroundTasks):
     # Fonksiyonu arka plana atıyoruz ki binlerce ürün eşitlenirken tarayıcı (Swagger) hata verip kopmasın
     background_tasks.add_task(arka_planda_fiyat_kurtar)
     return {"mesaj": "Fiyat kurtarma operasyonu arka planda başlatıldı. İşlemin anlık ilerleyişini Render Log (Live Tail) ekranından izleyebilirsiniz."}
+
+
+# --- 6. OTONOM VERİTABANI TEKİLLEŞTİRME VE TEMİZLİK MOTORU ---
+def arka_planda_tekillestir():
+    db = SessionLocal()
+    try:
+        SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+        SHOPIFY_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
+
+        # Shopify'a ait tüm kanal bağlantılarını (köprüleri) bul
+        shopify_listings = db.query(models.ChannelListing).filter(models.ChannelListing.channel_id == 4).all()
+        
+        print(f"\n--- 🧹 VERİTABANI TEKİLLEŞTİRME BAŞLADI ({len(shopify_listings)} Kayıt) ---")
+        
+        for listing in shopify_listings:
+            eski_variant = db.query(models.Variant).filter(models.Variant.id == listing.variant_id).first()
+            if not eski_variant:
+                continue
+                
+            shopify_variant_id = listing.channel_product_id
+            
+            # 1. Shopify API'den bu varyantın GERÇEK SKU'sunu sor
+            url = f"https://{SHOPIFY_URL}/admin/api/2026-07/variants/{shopify_variant_id}.json"
+            res = requests.get(url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN})
+            
+            if res.status_code == 200:
+                gercek_sku = res.json().get("variant", {}).get("sku")
+                
+                # Eğer Shopify'da gerçekten bir SKU girilmişse (boş değilse)
+                if gercek_sku:
+                    gercek_sku = str(gercek_sku).strip()
+                    
+                    # 2. N11'den gelen asıl kaydı bul
+                    n11_variant = db.query(models.Variant).filter(models.Variant.sku == gercek_sku).first()
+                    
+                    # Eğer asıl kayıt varsa ve şu anki kayıttan farklıysa (Kopya durumu)
+                    if n11_variant and n11_variant.id != eski_variant.id:
+                        
+                        # KÖPRÜYÜ TAŞI: Shopify bağlantısını (Kanal 4) N11'in ID'sine bağla
+                        listing.variant_id = n11_variant.id
+                        
+                        # HAYALETİ SİL: O uzun ID ile açılmış gereksiz kopyayı yok et
+                        db.delete(eski_variant)
+                        db.commit()
+                        
+                        print(f"[BİRLEŞTİRİLDİ] Shopify ürünü (Eski ID: {eski_variant.sku}) -> '{gercek_sku}' SKU'lu asıl N11 kaydına bağlandı. Kopya silindi.")
+                    else:
+                        # N11'de hiç yoksa ama Shopify'da SKU girilmişse, uzun numara yerine SKU'yu güncelleyelim
+                        if eski_variant.sku != gercek_sku:
+                            eski_variant.sku = gercek_sku
+                            db.commit()
+                else:
+                    # Vizyonunda belirttiğin gibi: SKU boşsa, uzun varyant ID'si ile veritabanında tekil olarak kalmaya devam etsin
+                    print(f"[ATLANDI] {shopify_variant_id} ID'li ürünün Shopify'da SKU'su yok, ayrı tutuluyor.")
+                    
+            time.sleep(0.3) # Shopify API sınırlarına takılmamak için frenleme
+            
+        print("--- 🧹 VERİTABANI TEKİLLEŞTİRME VE TEMİZLİK TAMAMLANDI ---\n")
+        
+    except Exception as e:
+        print(f"[HATA] Tekilleştirme kesintiye uğradı: {str(e)}")
+        db.rollback()
+    finally:
+        db.close()
+
+@router.get("/veritabani-tekillestir")
+def tekillestirmeyi_tetikle(background_tasks: BackgroundTasks):
+    background_tasks.add_task(arka_planda_tekillestir)
+    return {"mesaj": "Veritabanı temizleme ve birleştirme operasyonu arka planda başlatıldı. Loglardan izleyebilirsiniz."}
