@@ -612,26 +612,55 @@ def arka_planda_fiyat_kurtar():
                 variant.base_price = gercek_fiyat
                 db.commit()
                 
-                # 3. Shopify Vitrinini Onar
-                shopify_variant_id = listing.channel_product_id
-                shopify_url = f"https://{SHOPIFY_URL}/admin/api/2026-07/variants/{shopify_variant_id}.json"
+                # 3. Shopify Vitrinini Onar (Gelişmiş GraphQL Radarı + REST Güncelleme)
+                graphql_url = f"https://{SHOPIFY_URL}/admin/api/2026-07/graphql.json"
                 
-                # Fiyatı metin (string) formatına çeviriyoruz
-                shopify_payload = {
-                    "variant": {
-                        "id": shopify_variant_id,
-                        "price": str(gercek_fiyat) 
+                # Shopify'a SKU'yu verip gerçek sayısal ID'yi soruyoruz
+                graphql_payload = {
+                    "query": """
+                    query getVariant($skuQuery: String!) {
+                      productVariants(first: 1, query: $skuQuery) {
+                        edges {
+                          node {
+                            id
+                          }
+                        }
+                      }
+                    }
+                    """,
+                    "variables": {
+                        "skuQuery": f"sku:{sku}"
                     }
                 }
                 
-                shopify_res = requests.put(shopify_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json=shopify_payload)
+                gql_res = requests.post(graphql_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json=graphql_payload)
+                gql_data = gql_res.json()
                 
-                # Shopify'ın paketimizi kabul edip etmediğini kontrol ediyoruz
-                if shopify_res.status_code == 200:
-                    print(f"[ONARILDI] SKU: {sku} | Gerçek Satış Fiyatı: {gercek_fiyat} TL Shopify'a işlendi.")
+                edges = gql_data.get("data", {}).get("productVariants", {}).get("edges", [])
+                
+                if edges:
+                    # GraphQL bize 'gid://shopify/ProductVariant/4123456789' formatında bir kimlik döner. Son sayısal kısmı kesip alıyoruz.
+                    grafik_id = edges[0]["node"]["id"]
+                    gercek_variant_id = grafik_id.split("/")[-1]
+                    
+                    # Şimdi bu gerçek sayısal ID ile fiyatı vitrinde güncelliyoruz
+                    shopify_url = f"https://{SHOPIFY_URL}/admin/api/2026-07/variants/{gercek_variant_id}.json"
+                    shopify_payload = {
+                        "variant": {
+                            "id": gercek_variant_id,
+                            "price": str(gercek_fiyat)
+                        }
+                    }
+                    
+                    shopify_res = requests.put(shopify_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json=shopify_payload)
+                    
+                    if shopify_res.status_code == 200:
+                        print(f"[ONARILDI] SKU: {sku} | Gerçek Satış Fiyatı: {gercek_fiyat} TL Shopify'a işlendi.")
+                    else:
+                        print(f"[SHOPIFY HATASI] SKU: {sku} güncellenemedi! Hata Kodu: {shopify_res.status_code} | Sebep: {shopify_res.text}")
                 else:
-                    print(f"[SHOPIFY HATASI] SKU: {sku} güncellenemedi! Hata Kodu: {shopify_res.status_code} | Sebep: {shopify_res.text}")
-                
+                    print(f"[ATLANDI] SKU: {sku} Shopify'da bulunamadı! (Bu SKU ile açılmış bir ürün yok)")
+                    
             time.sleep(0.3) 
             
         print("--- 🛠️ FİYAT KURTARMA OPERASYONU BAŞARIYLA TAMAMLANDI ---\n")
