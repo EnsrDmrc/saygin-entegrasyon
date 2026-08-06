@@ -142,8 +142,7 @@ def process_standardized_order(db: Session, merchant_id: int, channel_id: int, o
 # --- DİNLEYİCİLER (WEBHOOKS) ---
 
 @router.post("/shopify/{merchant_id}")
-async def shopify_webhook(merchant_id: int, request: Request, db: Session = Depends(get_db)):
-    payload = await request.json()
+async def shopify_webhook(merchant_id: int, db: Session = Depends(get_db), payload: dict = Body(...)):
     order_number = payload.get("name", "Bilinmiyor")
     total_price = float(payload.get("total_price", 0.0))
     line_items = payload.get("line_items", []) 
