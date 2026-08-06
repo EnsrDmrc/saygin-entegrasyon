@@ -6,6 +6,7 @@ import requests
 import time
 import models
 from database import get_db, SessionLocal
+import xml.etree.ElementTree as ET
 
 # Shopify Mağaza Adresi Tanımı
 SHOPIFY_STORE_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
@@ -554,3 +555,86 @@ def eksik_urunu_ekle(sku: str, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         return {"durum": "HATA", "mesaj": str(e)}
+
+
+# --- 5. OTONOM FİYAT KURTARMA MOTORU ---
+def arka_planda_fiyat_kurtar():
+    db = SessionLocal()
+    try:
+        N11_KEY = os.getenv("N11_APP_KEY", "").strip()
+        N11_SECRET = os.getenv("N11_APP_SECRET", "").strip()
+        SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+        SHOPIFY_URL = os.getenv("SHOPIFY_STORE_URL", "saygin-grup.myshopify.com")
+
+        # Shopify bağlantısı (Kanal 4) olan tüm ürünleri bul
+        listings = db.query(models.ChannelListing).filter(models.ChannelListing.channel_id == 4).all()
+        
+        print(f"\n--- 🛠️ {len(listings)} ÜRÜN İÇİN N11 -> SHOPIFY FİYAT KURTARMA BAŞLADI ---")
+        
+        for listing in listings:
+            variant = db.query(models.Variant).filter(models.Variant.id == listing.variant_id).first()
+            if not variant or not variant.sku:
+                continue
+                
+            sku = variant.sku.strip().upper()
+            
+            # 1. N11 SOAP API'den Gerçek Fiyatı Çekme
+            n11_xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
+            <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
+               <soapenv:Header/>
+               <soapenv:Body>
+                  <sch:GetProductBySellerCodeRequest>
+                     <auth>
+                        <appKey>{N11_KEY}</appKey>
+                        <appSecret>{N11_SECRET}</appSecret>
+                     </auth>
+                     <sellerCode>{sku}</sellerCode>
+                  </sch:GetProductBySellerCodeRequest>
+               </soapenv:Body>
+            </soapenv:Envelope>"""
+            
+            n11_headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": ""}
+            n11_res = requests.post("https://api.n11.com/ws/ProductService/", headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
+            
+            # XML yanıtının içinden 'displayPrice' etiketini güvenli şekilde ayıklama
+            if "<displayPrice>" in n11_res.text:
+                fiyat_baslangic = n11_res.text.find("<displayPrice>") + len("<displayPrice>")
+                fiyat_bitis = n11_res.text.find("</displayPrice>")
+                
+                # N11'den gelen fiyatı (örneğin 9300.00) doğrudan ondalıklı sayıya çevir
+                gercek_fiyat = float(n11_res.text[fiyat_baslangic:fiyat_bitis])
+                
+                # 2. Yerel Veritabanını Onar
+                variant.base_price = gercek_fiyat
+                db.commit()
+                
+                # 3. Shopify Vitrinini Onar
+                shopify_variant_id = listing.channel_product_id
+                shopify_url = f"https://{SHOPIFY_URL}/admin/api/2026-07/variants/{shopify_variant_id}.json"
+                
+                shopify_payload = {
+                    "variant": {
+                        "id": shopify_variant_id,
+                        "price": gercek_fiyat
+                    }
+                }
+                requests.put(shopify_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json=shopify_payload)
+                
+                print(f"[ONARILDI] SKU: {sku} | Doğru Fiyat: {gercek_fiyat} TL Shopify'a işlendi.")
+            else:
+                print(f"[ATLANDI] SKU: {sku} N11 sunucularında bulunamadı veya fiyat okunamadı.")
+                
+            time.sleep(0.3) # N11 API sınırlarına (Rate Limit) takılmamak için motoru hafif yavaşlatıyoruz
+            
+        print("--- 🛠️ FİYAT KURTARMA OPERASYONU BAŞARIYLA TAMAMLANDI ---\n")
+        
+    except Exception as e:
+        print(f"[HATA] Kurtarma operasyonu kesintiye uğradı: {str(e)}")
+    finally:
+        db.close()
+
+@router.get("/fiyatlari-kurtar")
+def fiyatlari_kurtar_tetikle(background_tasks: BackgroundTasks):
+    # Fonksiyonu arka plana atıyoruz ki binlerce ürün eşitlenirken tarayıcı (Swagger) hata verip kopmasın
+    background_tasks.add_task(arka_planda_fiyat_kurtar)
+    return {"mesaj": "Fiyat kurtarma operasyonu arka planda başlatıldı. İşlemin anlık ilerleyişini Render Log (Live Tail) ekranından izleyebilirsiniz."}
