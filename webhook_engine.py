@@ -207,31 +207,31 @@ async def n11_webhook(merchant_id: int, db: Session = Depends(get_db), payload: 
     db.flush() 
     
     for item in items:
-        channel_product_id = str(item.get("sku"))
+        # 1. N11 paketinden gelen SKU'yu al ve ütüle (büyük harf ve boşluksuz)
+        gelen_sku = str(item.get("sku")).strip().upper()
         quantity = int(item.get("quantity", 1))
         unit_price = float(item.get("price", 0.0))
         
-        listing = db.query(models.ChannelListing).join(models.Channel).filter(
-            models.ChannelListing.channel_id == 3,
-            models.ChannelListing.channel_product_id == channel_product_id,
-            models.Channel.merchant_id == merchant_id
-        ).first()
+        # 2. DOĞRU ARAMA: Köprülere bakma, doğrudan merkez depodaki SKU'ya bak!
+        variant = db.query(models.Variant).filter(models.Variant.sku == gelen_sku).first()
         
-        if listing:
-            variant = db.query(models.Variant).filter(models.Variant.id == listing.variant_id).first()
-            if variant and variant.stock_quantity >= quantity:
+        if variant:
+            if variant.stock_quantity >= quantity:
                 db_order_item = models.OrderItem(
                     order_id=db_order.id, variant_id=variant.id, quantity=quantity, unit_price=unit_price
                 )
                 db.add(db_order_item)
                 
+                # Stok düşümü ve dağıtım
                 variant.stock_quantity -= quantity
-                print(f"[BAŞARILI] n11 ürünü ({channel_product_id}) eşleşti! Stoktan {quantity} adet düşüldü.")
+                print(f"[BAŞARILI] {gelen_sku} eşleşti! Merkez stoktan {quantity} adet düşüldü. Yeni Stok: {variant.stock_quantity}")
+                
+                # OPTİMİZASYON: Kaynak Kanal 3 (N11). N11'i atlayıp doğrudan Shopify'a fırlatacak!
                 sync_stock_to_channels(db, variant.id, variant.stock_quantity, origin_channel_id=3)
             else:
-                print(f"[UYARI] {channel_product_id} için stok yetersiz veya ürün bulunamadı!")
+                print(f"[UYARI] {gelen_sku} için merkez stok yetersiz!")
         else:
-            print(f"[ATLANDI] {channel_product_id} kodlu ürün n11 eşleştirmelerinde bulunamadı.")
+            print(f"[ATLANDI] {gelen_sku} kodlu ürün yerel veritabanında bulunamadı.")
             
     db.commit() 
     return {"status": "success", "message": "n11 siparişi başarıyla işlendi ve stoklar güncellendi."}
