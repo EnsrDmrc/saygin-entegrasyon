@@ -576,7 +576,11 @@ def arka_planda_fiyat_kurtar():
             if not variant or not variant.sku:
                 continue
                 
-            sku = variant.sku.strip().upper()
+            # DÜZELTME 1: .upper() KALDIRILDI. N11 büyük/küçük harfe duyarlıdır. Sadece boşlukları temizliyoruz.
+            sku = str(variant.sku).strip()
+            
+            # GÜVENLİK: XML içinde hataya sebep olabilecek özel karakterleri (<, >, &) dönüştürüyoruz
+            guvenli_sku = sku.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             
             # 1. N11 SOAP API'den Gerçek Fiyatı Çekme
             n11_xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -588,7 +592,7 @@ def arka_planda_fiyat_kurtar():
                         <appKey>{N11_KEY}</appKey>
                         <appSecret>{N11_SECRET}</appSecret>
                      </auth>
-                     <sellerCode>{sku}</sellerCode>
+                     <sellerCode>{guvenli_sku}</sellerCode>
                   </sch:GetProductBySellerCodeRequest>
                </soapenv:Body>
             </soapenv:Envelope>"""
@@ -596,12 +600,12 @@ def arka_planda_fiyat_kurtar():
             n11_headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": ""}
             n11_res = requests.post("https://api.n11.com/ws/ProductService/", headers=n11_headers, data=n11_xml_payload.encode('utf-8'))
             
-            # XML yanıtının içinden 'displayPrice' etiketini güvenli şekilde ayıklama
-            if "<displayPrice>" in n11_res.text:
-                fiyat_baslangic = n11_res.text.find("<displayPrice>") + len("<displayPrice>")
-                fiyat_bitis = n11_res.text.find("</displayPrice>")
+            # DÜZELTME 2: <displayPrice> (İndirimli) yerine, <price> (Gerçek Satış Fiyatı) çekiliyor
+            if "<price>" in n11_res.text:
+                fiyat_baslangic = n11_res.text.find("<price>") + len("<price>")
+                fiyat_bitis = n11_res.text.find("</price>")
                 
-                # N11'den gelen fiyatı (örneğin 9300.00) doğrudan ondalıklı sayıya çevir
+                # N11'den gelen baz fiyatı alıyoruz
                 gercek_fiyat = float(n11_res.text[fiyat_baslangic:fiyat_bitis])
                 
                 # 2. Yerel Veritabanını Onar
@@ -620,11 +624,11 @@ def arka_planda_fiyat_kurtar():
                 }
                 requests.put(shopify_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}, json=shopify_payload)
                 
-                print(f"[ONARILDI] SKU: {sku} | Doğru Fiyat: {gercek_fiyat} TL Shopify'a işlendi.")
+                print(f"[ONARILDI] SKU: {sku} | Gerçek Satış Fiyatı: {gercek_fiyat} TL Shopify'a işlendi.")
             else:
                 print(f"[ATLANDI] SKU: {sku} N11 sunucularında bulunamadı veya fiyat okunamadı.")
                 
-            time.sleep(0.3) # N11 API sınırlarına (Rate Limit) takılmamak için motoru hafif yavaşlatıyoruz
+            time.sleep(0.3) 
             
         print("--- 🛠️ FİYAT KURTARMA OPERASYONU BAŞARIYLA TAMAMLANDI ---\n")
         
@@ -632,9 +636,3 @@ def arka_planda_fiyat_kurtar():
         print(f"[HATA] Kurtarma operasyonu kesintiye uğradı: {str(e)}")
     finally:
         db.close()
-
-@router.get("/fiyatlari-kurtar")
-def fiyatlari_kurtar_tetikle(background_tasks: BackgroundTasks):
-    # Fonksiyonu arka plana atıyoruz ki binlerce ürün eşitlenirken tarayıcı (Swagger) hata verip kopmasın
-    background_tasks.add_task(arka_planda_fiyat_kurtar)
-    return {"mesaj": "Fiyat kurtarma operasyonu arka planda başlatıldı. İşlemin anlık ilerleyişini Render Log (Live Tail) ekranından izleyebilirsiniz."}
