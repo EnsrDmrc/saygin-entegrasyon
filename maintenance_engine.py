@@ -636,3 +636,12 @@ def arka_planda_fiyat_kurtar():
         print(f"[HATA] Kurtarma operasyonu kesintiye uğradı: {str(e)}")
     finally:
         db.close()
+
+
+from fastapi import BackgroundTasks
+
+@router.get("/fiyatlari-kurtar")
+def fiyatlari_kurtar_tetikle(background_tasks: BackgroundTasks):
+    # Fonksiyonu arka plana atıyoruz ki binlerce ürün eşitlenirken tarayıcı (Swagger) hata verip kopmasın
+    background_tasks.add_task(arka_planda_fiyat_kurtar)
+    return {"mesaj": "Fiyat kurtarma operasyonu arka planda başlatıldı. İşlemin anlık ilerleyişini Render Log (Live Tail) ekranından izleyebilirsiniz."}
