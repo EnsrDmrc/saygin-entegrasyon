@@ -156,34 +156,38 @@ async def shopify_webhook(merchant_id: int, db: Session = Depends(get_db), paylo
     db.flush() 
     
     for item in line_items:
-        channel_product_id = item.get("sku")
-        if not channel_product_id:
-            channel_product_id = str(item.get("variant_id"))
+        # 1. Gelen paketten SKU'yu alıyoruz
+        gelen_sku = item.get("sku")
+        if not gelen_sku:
+            gelen_sku = str(item.get("variant_id"))
         
         quantity = int(item.get("quantity", 1))
         unit_price = float(item.get("price", 0.0))
         
-        listing = db.query(models.ChannelListing).join(models.Channel).filter(
-            models.ChannelListing.channel_id == 4,
-            models.ChannelListing.channel_product_id == channel_product_id,
-            models.Channel.merchant_id == merchant_id
-        ).first()
+        # 2. DOĞRU ARAMA: Önce yerel veritabanımızdan doğrudan SKU ile ürünü buluyoruz
+        variant = db.query(models.Variant).filter(models.Variant.sku == gelen_sku).first()
         
-        if listing:
-            variant = db.query(models.Variant).filter(models.Variant.id == listing.variant_id).first()
-            if variant and variant.stock_quantity >= quantity:
+        if variant:
+            # 3. Ürünü bulduktan sonra, bu ürünün Shopify (Kanal 4) bağlantısı var mı diye bakıyoruz
+            listing = db.query(models.ChannelListing).filter(
+                models.ChannelListing.variant_id == variant.id,
+                models.ChannelListing.channel_id == 4
+            ).first()
+            
+            if listing and variant.stock_quantity >= quantity:
                 db_order_item = models.OrderItem(
                     order_id=db_order.id, variant_id=variant.id, quantity=quantity, unit_price=unit_price
                 )
                 db.add(db_order_item)
                 
+                # Stok düşümü ve dağıtım
                 variant.stock_quantity -= quantity
-                print(f"[BAŞARILI] {channel_product_id} eşleşti! Stoktan {quantity} adet düşüldü.")
+                print(f"[BAŞARILI] {gelen_sku} eşleşti! Stoktan {quantity} adet düşüldü.")
                 sync_stock_to_channels(db, variant.id, variant.stock_quantity, origin_channel_id=4)
             else:
-                print(f"[UYARI] {channel_product_id} için stok yetersiz veya ürün bulunamadı!")
+                print(f"[UYARI] {gelen_sku} için stok yetersiz veya Shopify bağlantısı kurulamamış!")
         else:
-            print(f"[ATLANDI] {channel_product_id} kodlu ürün veritabanı eşleştirmelerinde bulunamadı.")
+            print(f"[ATLANDI] {gelen_sku} kodlu ürün yerel veritabanında bulunamadı.")
             
     db.commit() 
     return {"status": "success", "message": "Shopify siparişi işlendi ve stoklar güncellendi."}
